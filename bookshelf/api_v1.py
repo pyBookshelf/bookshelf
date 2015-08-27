@@ -422,7 +422,6 @@ def dir_ensure(location, recursive=False, mode=None,
 
     if not dir_exists(location):
         if use_sudo:
-            print('here1')
             sudo('mkdir %s %s' % (args, location))
         else:
             run('mkdir %s %s' % (args, location))
@@ -618,6 +617,27 @@ def enable_firewalld_service():
     """ install and enables the firewalld service """
     yum_install(packages=['firewalld'])
     systemd(service='firewalld', unmask=True)
+
+
+def enable_selinux():
+    """ disables selinux """
+
+    if not contains(filename='/etc/selinux/config',
+                    text='SELINUX=enforcing'):
+        sed('/etc/selinux/config',
+            'SELINUX=.*', 'SELINUX=enforcing', use_sudo=True)
+
+    if contains(filename='/etc/selinux/config',
+                text='SELINUXTYPE=targeted'):
+        sed('/etc/selinux/config',
+            'SELINUXTYPE=.*', 'SELINUX=targeted', use_sudo=True)
+
+    sudo('/sbin/setenforce 1')
+
+    if sudo('getenforce') != 'Enforcing':
+        with settings(warn_only=True, capture=True):
+            sudo('/sbin/reboot')
+        sleep_for_one_minute()
 
 
 def file_attribs(location, mode=None, owner=None, group=None, sudo=False):
@@ -823,6 +843,7 @@ def install_zfs_from_testing_repository():
     sudo("echo ZFS_DKMS_DISABLE_STRIP=y >> /etc/sysconfig/zfs")
     sudo("yum install --quiet -y --enablerepo=zfs-testing zfs")
     sudo("dkms autoinstall")
+    sudo("modprobe zfs")
 
 
 def is_deb_package_installed(pkg):
