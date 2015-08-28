@@ -479,11 +479,11 @@ def disable_selinux():
             'SELINUX=enforcing', 'SELINUX=disabled', use_sudo=True)
 
     if contains(filename='/etc/selinux/config',
-                text='SELINUXTYPE=enforcing'):
+                text='SELINUX=permissive''):
         sed('/etc/selinux/config',
-            'SELINUXTYPE=enforcing', 'SELINUX=targeted', use_sudo=True)
+            'SELINUX=permissive', 'SELINUX=disabled', use_sudo=True)
 
-    if sudo('getenforce') != 'Disabled':
+    if sudo('getenforce').lower() != 'disabled':
         with settings(warn_only=True, capture=True):
             sudo('/sbin/reboot')
         sleep_for_one_minute()
