@@ -479,7 +479,7 @@ def disable_selinux():
             'SELINUX=enforcing', 'SELINUX=disabled', use_sudo=True)
 
     if contains(filename='/etc/selinux/config',
-                text='SELINUX=permissive''):
+                text='SELINUX=permissive'):
         sed('/etc/selinux/config',
             'SELINUX=permissive', 'SELINUX=disabled', use_sudo=True)
 
