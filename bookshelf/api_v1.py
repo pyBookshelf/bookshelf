@@ -309,16 +309,23 @@ def create_server_ec2(distribution,
 
     # and get our instance_id
     instance = reservation.instances[0]
-    # add a tag to our instance
-    conn.create_tags([instance.id], tags)
+
     #  and loop and wait until ssh is available
     while instance.state == u'pending':
         log_yellow("Instance state: %s" % instance.state)
         sleep(10)
         instance.update()
+    log_green("Instance state: %s" % instance.state)
     wait_for_ssh(instance.public_dns_name)
 
-    log_green("Instance state: %s" % instance.state)
+    # update the EBS volumes to be deleted on instance termination
+    for dev, bd in instance.block_device_mapping.items():
+        instance.modify_attribute('BlockDeviceMapping',
+                                  ["%s=%d" % (dev, 1)])
+
+    # add a tag to our instance
+    conn.create_tags([instance.id], tags)
+
     log_green("Public dns: %s" % instance.public_dns_name)
     # finally save the details or our new instance into the local state file
     save_state_locally(cloud='ec2',
@@ -507,6 +514,15 @@ def destroy(cloud, region, instance_id, access_key_id, secret_access_key):
         destroy_rackspace(region, instance_id, access_key_id, secret_access_key)
 
 
+def destroy_ebs_volume(region, volume_id, access_key_id, secret_access_key):
+    """ destroys an ebs volume """
+    conn = connect_to_ec2(region, access_key_id, secret_access_key)
+
+    if ebs_volume_exists(region, volume_id, access_key_id, secret_access_key):
+        log_yellow('destroying EBS volume ...')
+        conn.delete_volume(volume_id)
+
+
 def destroy_ec2(region, instance_id, access_key_id, secret_access_key):
     """ terminates the instance """
     conn = connect_to_ec2(region, access_key_id, secret_access_key)
@@ -523,10 +539,10 @@ def destroy_ec2(region, instance_id, access_key_id, secret_access_key):
         log_yellow("Instance state: %s" % instance.state)
         sleep(10)
         instance.update()
-    volume = data['volume']
-    if volume:
-        log_yellow('destroying EBS volume ...')
-        conn.delete_volume(volume)
+    volume_id = data['volume']
+    if volume_id:
+        destroy_ebs_volume(region, volume_id, access_key_id,
+                           secret_access_key)
     os.unlink('data.json')
 
 
@@ -596,6 +612,14 @@ def down_rackspace(cloud,
         sleep(10)
         server = nova.servers.get(instance_id)
     log_yellow("Instance state: %s" % server.status)
+
+
+def ebs_volume_exists(region, volume_id, access_key_id, secret_access_key):
+    """ finds out if a ebs volume exists """
+    conn = connect_to_ec2(region, access_key_id, secret_access_key)
+    for vol in conn.get_all_volumes():
+        if vol.id == volume_id:
+            return True
 
 
 def ec2():
@@ -1009,7 +1033,9 @@ def rackspace():
 
 
 def reboot():
-    sudo('shutdown -r now')
+    with settings(warn_only=True, capture=True):
+        sudo('shutdown -r now')
+        sleep_for_one_minute()
 
 
 def remove_image(image):
@@ -1263,6 +1289,7 @@ def yum_install_from_url(pkg_name, url):
 
 def wait_for_ssh(host, port=22, timeout=600):
     """ probes the ssh port and waits until it is available """
+    log_yellow('waiting for ssh...')
     for iteration in xrange(1, timeout):
         sleep(1)
         if is_ssh_available(host, port):
