@@ -1107,6 +1107,23 @@ def log_red(msg):
     print(red(msg))
 
 
+def lsb_release():
+    """ returns /etc/lsb-release in a dictionary """
+    with settings(hide('warnings', 'running', 'stdout', 'stderr'),
+                  warn_only=True, capture=True):
+
+        _lsb_release = {}
+        data = run('cat /etc/lsb-release')
+        for line in data.split('\n'):
+            if not line:
+                continue
+            parts = line.split('=')
+            if len(parts) == 2:
+                _lsb_release[parts[0]] = parts[1].strip('\n\r"')
+
+        return _lsb_release
+
+
 def print_ec2_info(region,
                    instance_id,
                    access_key_id,
