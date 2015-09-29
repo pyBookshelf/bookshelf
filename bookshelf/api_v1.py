@@ -802,6 +802,59 @@ def install_docker():
     systemd('docker.service')
 
 
+def install_mesos_single_box_mode(distribution):
+    """ install mesos (all of it) on a single node"""
+
+    if 'ubuntu' in distribution:
+        apt_add_key(keyid='E56151BF')
+
+        os = lsb_release()
+        apt_string = 'deb http://repos.mesosphere.io/%s %s main' % (
+            os['DISTRIB_ID'], os['DISTRIB_CODENAME'])
+
+        apt_add_repository_from_apt_string(apt_string, 'mesosphere.list')
+
+        install_ubuntu_development_tools()
+
+        apt_install(packages=['mesos', 'marathon'])
+
+        if not file_contains('/etc/default/mesos-master',
+                             'MESOS_QUORUM=1', use_sudo=True):
+            file_append('/etc/default/mesos-master',
+                        'MESOS_QUORUM=1', use_sudo=True)
+
+            for svc in ['zookeeper', 'mesos-master', 'mesos-slave', 'marathon']:
+                sudo('service %s restart' % svc)
+
+        insert_line_in_file_after_regex(
+            path='/etc/nginx/sites-available/default',
+            line='                autoindex on;',
+            after_regex='^.*location / {',
+            use_sudo=True)
+
+
+def insert_line_in_file_after_regex(path, line, after_regex, use_sudo=False):
+    """ inserts a line in the middle of a file """
+
+    fd = StringIO()
+    get_file(path, fd, use_sudo=use_sudo)
+    original=fd.getvalue()
+
+    if line not in original:
+        output = StringIO()
+        for line in original.split('\n'):
+            output.write(line + '\n')
+            if re.match(after_regex, line) is not None:
+                output.write(line + '\n')
+
+        upload_file(local_path=output,
+                    remote_path=path,
+                    use_sudo=use_sudo)
+        output.close()
+
+
+
+
 def install_gem(gem):
     """ install a particular gem """
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
