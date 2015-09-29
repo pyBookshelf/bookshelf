@@ -631,7 +631,7 @@ def ec2():
 
 def enable_apt_repositories(prefix, url, version, repositories):
     """ adds an apt repository """
-    with settings(hide('warnings', 'running', 'stdout', 'stderr'),
+    with settings(hide('warnings', 'running', 'stdout'),
                   warn_only=False, capture=True):
         sudo('apt-add-repository "%s %s %s %s"' % (prefix,
                                                    url,
