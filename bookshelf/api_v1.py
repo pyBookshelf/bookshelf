@@ -10,9 +10,12 @@ import sys
 
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, EBSBlockDeviceType
 from fabric.api import env, sudo, local, settings, run
+from fabric.operations import (get as get_file,
+                               put as upload_file)
 from fabric.colors import green, yellow, red
 from fabric.context_managers import cd, hide, lcd
 from fabric.contrib.files import (append as file_append,
+                                  contains as file_contains,
                                   comment as comment_line,
                                   exists,
                                   sed,
@@ -20,6 +23,7 @@ from fabric.contrib.files import (append as file_append,
 from itertools import chain
 from sys import exit
 from time import sleep
+from StringIO import StringIO
 
 
 def add_epel_yum_repository():
@@ -84,18 +88,21 @@ def apt_install(**kwargs):
             sudo("apt-get install -y %s" % pkg)
 
 
-def apt_install_from_url(pkg_name, url):
+def apt_install_from_url(pkg_name, url, log=False):
     """ installs a pkg from a url
         p pkg_name: the name of the package to install
         p url: the full URL for the rpm package
     """
     if is_package_installed(distribution='ubuntu', pkg=pkg_name) is False:
-        log_green("installing %s from %s" % (pkg_name, url))
-        with settings(hide('warnings', 'running', 'stdout', 'stderr'),
+
+        if log:
+            log_green("installing %s from %s" % (pkg_name, url))
+
+        with settings(hide('warnings', 'running', 'stdout'),
                       warn_only=True, capture=True):
 
-            sudo("wget -c %s" % url)
-            result = sudo("dpkg -i %s" % pkg_name)
+            sudo("wget -c -O %s.deb %s" % (pkg_name, url))
+            result = sudo("dpkg -i %s.deb" % pkg_name)
             if result.return_code == 0:
                 return True
             elif result.return_code == 1:
@@ -103,6 +110,26 @@ def apt_install_from_url(pkg_name, url):
             else:  # print error to user
                 print(result)
                 raise SystemExit()
+
+
+def apt_add_repository_from_apt_string(apt_string, apt_file):
+    """ adds a new repository file for apt """
+
+    apt_file_path='/etc/apt/sources.list.d/%s' % apt_file
+
+    if not file_contains(apt_file_path, apt_string.lower(), use_sudo=True):
+        file_append(apt_file_path, apt_string.lower(), use_sudo=True)
+
+        with hide('running', 'stdout'):
+            sudo("apt-get update")
+
+
+def apt_add_key(keyid, keyserver='keyserver.ubuntu.com', log=False):
+    """ trust a new PGP key related to a apt-repository """
+    if log:
+        log_green('trusting keyid %s from %s' % (keyid, keyserver))
+    with settings(hide('warnings', 'running', 'stdout')):
+        sudo('apt-key adv --keyserver %s --recv %s' % (keyserver, keyid))
 
 
 def arch():
@@ -309,16 +336,23 @@ def create_server_ec2(distribution,
 
     # and get our instance_id
     instance = reservation.instances[0]
-    # add a tag to our instance
-    conn.create_tags([instance.id], tags)
+
     #  and loop and wait until ssh is available
     while instance.state == u'pending':
         log_yellow("Instance state: %s" % instance.state)
         sleep(10)
         instance.update()
+    log_green("Instance state: %s" % instance.state)
     wait_for_ssh(instance.public_dns_name)
 
-    log_green("Instance state: %s" % instance.state)
+    # update the EBS volumes to be deleted on instance termination
+    for dev, bd in instance.block_device_mapping.items():
+        instance.modify_attribute('BlockDeviceMapping',
+                                  ["%s=%d" % (dev, 1)])
+
+    # add a tag to our instance
+    conn.create_tags([instance.id], tags)
+
     log_green("Public dns: %s" % instance.public_dns_name)
     # finally save the details or our new instance into the local state file
     save_state_locally(cloud='ec2',
@@ -507,6 +541,15 @@ def destroy(cloud, region, instance_id, access_key_id, secret_access_key):
         destroy_rackspace(region, instance_id, access_key_id, secret_access_key)
 
 
+def destroy_ebs_volume(region, volume_id, access_key_id, secret_access_key):
+    """ destroys an ebs volume """
+    conn = connect_to_ec2(region, access_key_id, secret_access_key)
+
+    if ebs_volume_exists(region, volume_id, access_key_id, secret_access_key):
+        log_yellow('destroying EBS volume ...')
+        conn.delete_volume(volume_id)
+
+
 def destroy_ec2(region, instance_id, access_key_id, secret_access_key):
     """ terminates the instance """
     conn = connect_to_ec2(region, access_key_id, secret_access_key)
@@ -523,10 +566,10 @@ def destroy_ec2(region, instance_id, access_key_id, secret_access_key):
         log_yellow("Instance state: %s" % instance.state)
         sleep(10)
         instance.update()
-    volume = data['volume']
-    if volume:
-        log_yellow('destroying EBS volume ...')
-        conn.delete_volume(volume)
+    volume_id = data['volume']
+    if volume_id:
+        destroy_ebs_volume(region, volume_id, access_key_id,
+                           secret_access_key)
     os.unlink('data.json')
 
 
@@ -598,13 +641,21 @@ def down_rackspace(cloud,
     log_yellow("Instance state: %s" % server.status)
 
 
+def ebs_volume_exists(region, volume_id, access_key_id, secret_access_key):
+    """ finds out if a ebs volume exists """
+    conn = connect_to_ec2(region, access_key_id, secret_access_key)
+    for vol in conn.get_all_volumes():
+        if vol.id == volume_id:
+            return True
+
+
 def ec2():
     env.cloud = 'ec2'
 
 
 def enable_apt_repositories(prefix, url, version, repositories):
     """ adds an apt repository """
-    with settings(hide('warnings', 'running', 'stdout', 'stderr'),
+    with settings(hide('warnings', 'running', 'stdout'),
                   warn_only=False, capture=True):
         sudo('apt-add-repository "%s %s %s %s"' % (prefix,
                                                    url,
@@ -775,6 +826,59 @@ def install_docker():
     systemd('docker.service')
 
 
+def install_mesos_single_box_mode(distribution):
+    """ install mesos (all of it) on a single node"""
+
+    if 'ubuntu' in distribution:
+        apt_add_key(keyid='E56151BF')
+
+        os = lsb_release()
+        apt_string = 'deb http://repos.mesosphere.io/%s %s main' % (
+            os['DISTRIB_ID'], os['DISTRIB_CODENAME'])
+
+        apt_add_repository_from_apt_string(apt_string, 'mesosphere.list')
+
+        install_ubuntu_development_tools()
+
+        apt_install(packages=['mesos', 'marathon'])
+
+        if not file_contains('/etc/default/mesos-master',
+                             'MESOS_QUORUM=1', use_sudo=True):
+            file_append('/etc/default/mesos-master',
+                        'MESOS_QUORUM=1', use_sudo=True)
+
+            for svc in ['zookeeper', 'mesos-master', 'mesos-slave', 'marathon']:
+                sudo('service %s restart' % svc)
+
+        insert_line_in_file_after_regex(
+            path='/etc/nginx/sites-available/default',
+            line='                autoindex on;',
+            after_regex='^.*location / {',
+            use_sudo=True)
+
+
+def insert_line_in_file_after_regex(path, line, after_regex, use_sudo=False):
+    """ inserts a line in the middle of a file """
+
+    fd = StringIO()
+    get_file(path, fd, use_sudo=use_sudo)
+    original=fd.getvalue()
+
+    if line not in original:
+        output = StringIO()
+        for line in original.split('\n'):
+            output.write(line + '\n')
+            if re.match(after_regex, line) is not None:
+                output.write(line + '\n')
+
+        upload_file(local_path=output,
+                    remote_path=path,
+                    use_sudo=use_sudo)
+        output.close()
+
+
+
+
 def install_gem(gem):
     """ install a particular gem """
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
@@ -846,20 +950,90 @@ def install_zfs_from_testing_repository():
     sudo("modprobe zfs")
 
 
+def install_virtualbox(distribution, force_setup=False):
+    """ install virtualbox """
+
+    if 'ubuntu' in distribution:
+        with hide('running', 'stdout'):
+            sudo('apt-get update')
+            sudo('apt-get -y upgrade')
+        install_ubuntu_development_tools()
+        apt_install(packages=['dkms',
+                               'linux-headers-generic',
+                               'build-essential'])
+        sudo('wget -q https://www.virtualbox.org/download/oracle_vbox.asc -O- |'
+             'sudo apt-key add -')
+
+        os = lsb_release()
+        apt_string = ' '.join(
+            ['deb',
+             'http://download.virtualbox.org/virtualbox/debian',
+             '%s contrib' % os['DISTRIB_CODENAME']])
+
+        apt_add_repository_from_apt_string(apt_string, 'vbox.list')
+
+        apt_install(packages=['virtualbox-5.0'])
+
+        with hide('running', 'stdout'):
+            loaded_modules=sudo('lsmod')
+
+        if 'vboxdrv' not in loaded_modules or force_setup:
+            sudo('/etc/init.d/vboxdrv setup')
+
+        sudo('wget -c '
+             'http://download.virtualbox.org/virtualbox/5.0.4/'
+             'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack')
+
+        sudo('VBoxManage extpack install --replace '
+             'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack')
+
+
+def install_vagrant(distribution, version):
+    """ install vagrant """
+
+    if 'ubuntu' in distribution:
+        apt_install_from_url('vagrant',
+                             'https://dl.bintray.com/mitchellh/vagrant/'
+                             'vagrant_%s_x86_64.deb' % version)
+
+
+def install_vagrant_plugin(plugin, use_sudo=False):
+    """ install vagrant plugin """
+
+    cmd = 'vagrant plugin install %s' % plugin
+
+    if use_sudo:
+        sudo(cmd)
+    else:
+        run(cmd)
+
+
+def is_vagrant_plugin_installed(plugin, use_sudo=False):
+    """ checks if vagrant plugin is installed """
+
+    cmd = 'vagrant plugin list'
+
+    if use_sudo:
+        results = sudo(cmd)
+    else:
+        results = run(cmd)
+
+    installed_plugins = []
+    for line in results:
+        plugin = re.search('^(\S.*) \((.*)\)$', line)
+        installed_plugins.append({'name': plugin.group(0),
+                                  'version': plugin.group(1)})
+        return installed_plugins
+
+
 def is_deb_package_installed(pkg):
     """ checks if a particular deb package is installed """
 
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
                   warn_only=True, capture=True):
 
-        result = sudo("dpkg -L %s" % pkg)
-        if result.return_code == 0:
-            return True
-        elif result.return_code == 1:
-            return False
-        else:  # print error to user
-            print(result)
-            raise SystemExit()
+        result = sudo("dpkg -l %s" % pkg)
+        return not bool(result.return_code)
 
 
 def is_package_installed(distribution, pkg):
@@ -957,6 +1131,23 @@ def log_red(msg):
     print(red(msg))
 
 
+def lsb_release():
+    """ returns /etc/lsb-release in a dictionary """
+    with settings(hide('warnings', 'running', 'stdout', 'stderr'),
+                  warn_only=True, capture=True):
+
+        _lsb_release = {}
+        data = run('cat /etc/lsb-release')
+        for line in data.split('\n'):
+            if not line:
+                continue
+            parts = line.split('=')
+            if len(parts) == 2:
+                _lsb_release[parts[0]] = parts[1].strip('\n\r"')
+
+        return _lsb_release
+
+
 def print_ec2_info(region,
                    instance_id,
                    access_key_id,
@@ -1009,7 +1200,9 @@ def rackspace():
 
 
 def reboot():
-    sudo('shutdown -r now')
+    with settings(warn_only=True, capture=True):
+        sudo('shutdown -r now')
+        sleep_for_one_minute()
 
 
 def remove_image(image):
@@ -1263,7 +1456,8 @@ def yum_install_from_url(pkg_name, url):
 
 def wait_for_ssh(host, port=22, timeout=600):
     """ probes the ssh port and waits until it is available """
-    for iteration in xrange(1, timeout):
+    log_yellow('waiting for ssh...')
+    for iteration in xrange(1, timeout): #noqa
         sleep(1)
         if is_ssh_available(host, port):
             return True
