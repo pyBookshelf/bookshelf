@@ -10,9 +10,12 @@ import sys
 
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, EBSBlockDeviceType
 from fabric.api import env, sudo, local, settings, run
+from fabric.operations import (get as get_file,
+                               put as upload_file)
 from fabric.colors import green, yellow, red
 from fabric.context_managers import cd, hide, lcd
 from fabric.contrib.files import (append as file_append,
+                                  contains as file_contains,
                                   comment as comment_line,
                                   exists,
                                   sed,
@@ -20,6 +23,7 @@ from fabric.contrib.files import (append as file_append,
 from itertools import chain
 from sys import exit
 from time import sleep
+from StringIO import StringIO
 
 
 def add_epel_yum_repository():
