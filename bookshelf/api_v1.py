@@ -1430,7 +1430,7 @@ def yum_install_from_url(pkg_name, url):
 
 def wait_for_ssh(host, port=22, timeout=600):
     """ probes the ssh port and waits until it is available """
-    for iteration in xrange(1, timeout):
+    for iteration in xrange(1, timeout): #noqa
         sleep(1)
         if is_ssh_available(host, port):
             return True
