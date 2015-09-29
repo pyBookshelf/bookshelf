@@ -88,18 +88,21 @@ def apt_install(**kwargs):
             sudo("apt-get install -y %s" % pkg)
 
 
-def apt_install_from_url(pkg_name, url):
+def apt_install_from_url(pkg_name, url, log=False):
     """ installs a pkg from a url
         p pkg_name: the name of the package to install
         p url: the full URL for the rpm package
     """
     if is_package_installed(distribution='ubuntu', pkg=pkg_name) is False:
-        log_green("installing %s from %s" % (pkg_name, url))
-        with settings(hide('warnings', 'running', 'stdout', 'stderr'),
+
+        if log:
+            log_green("installing %s from %s" % (pkg_name, url))
+
+        with settings(hide('warnings', 'running', 'stdout'),
                       warn_only=True, capture=True):
 
-            sudo("wget -c %s" % url)
-            result = sudo("dpkg -i %s" % pkg_name)
+            sudo("wget -c -O %s.deb %s" % (pkg_name, url))
+            result = sudo("dpkg -i %s.deb" % pkg_name)
             if result.return_code == 0:
                 return True
             elif result.return_code == 1:
