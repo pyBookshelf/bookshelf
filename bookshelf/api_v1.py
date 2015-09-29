@@ -112,6 +112,26 @@ def apt_install_from_url(pkg_name, url, log=False):
                 raise SystemExit()
 
 
+def apt_add_repository_from_apt_string(apt_string, apt_file):
+    """ adds a new repository file for apt """
+
+    apt_file_path='/etc/apt/sources.list.d/%s' % apt_file
+
+    if not file_contains(apt_file_path, apt_string.lower(), use_sudo=True):
+        file_append(apt_file_path, apt_string.lower(), use_sudo=True)
+
+        with hide('running', 'stdout'):
+            sudo("apt-get update")
+
+
+def apt_add_key(keyid, keyserver='keyserver.ubuntu.com', log=False):
+    """ trust a new PGP key related to a apt-repository """
+    if log:
+        log_green('trusting keyid %s from %s' % (keyid, keyserver))
+    with settings(hide('warnings', 'running', 'stdout')):
+        sudo('apt-key adv --keyserver %s --recv %s' % (keyserver, keyid))
+
+
 def arch():
     """ returns the current cpu archictecture """
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
