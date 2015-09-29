@@ -926,20 +926,90 @@ def install_zfs_from_testing_repository():
     sudo("modprobe zfs")
 
 
+def install_virtualbox(distribution, force_setup=False):
+    """ install virtualbox """
+
+    if 'ubuntu' in distribution:
+        with hide('running', 'stdout'):
+            sudo('apt-get update')
+            sudo('apt-get -y upgrade')
+        install_ubuntu_development_tools()
+        apt_install(packages=['dkms',
+                               'linux-headers-generic',
+                               'build-essential'])
+        sudo('wget -q https://www.virtualbox.org/download/oracle_vbox.asc -O- |'
+             'sudo apt-key add -')
+
+        os = lsb_release()
+        apt_string = ' '.join(
+            ['deb',
+             'http://download.virtualbox.org/virtualbox/debian',
+             '%s contrib' % os['DISTRIB_CODENAME']])
+
+        apt_add_repository_from_apt_string(apt_string, 'vbox.list')
+
+        apt_install(packages=['virtualbox-5.0'])
+
+        with hide('running', 'stdout'):
+            loaded_modules=sudo('lsmod')
+
+        if 'vboxdrv' not in loaded_modules or force_setup:
+            sudo('/etc/init.d/vboxdrv setup')
+
+        sudo('wget -c '
+             'http://download.virtualbox.org/virtualbox/5.0.4/'
+             'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack')
+
+        sudo('VBoxManage extpack install --replace '
+             'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack')
+
+
+def install_vagrant(distribution, version):
+    """ install vagrant """
+
+    if 'ubuntu' in distribution:
+        apt_install_from_url('vagrant',
+                             'https://dl.bintray.com/mitchellh/vagrant/'
+                             'vagrant_%s_x86_64.deb' % version)
+
+
+def install_vagrant_plugin(plugin, use_sudo=False):
+    """ install vagrant plugin """
+
+    cmd = 'vagrant plugin install %s' % plugin
+
+    if use_sudo:
+        sudo(cmd)
+    else:
+        run(cmd)
+
+
+def is_vagrant_plugin_installed(plugin, use_sudo=False):
+    """ checks if vagrant plugin is installed """
+
+    cmd = 'vagrant plugin list'
+
+    if use_sudo:
+        results = sudo(cmd)
+    else:
+        results = run(cmd)
+
+    installed_plugins = []
+    for line in results:
+        plugin = re.search('^(\S.*) \((.*)\)$', line)
+        installed_plugins.append({'name': plugin.group(0),
+                                  'version': plugin.group(1)})
+        return installed_plugins
+
+
 def is_deb_package_installed(pkg):
     """ checks if a particular deb package is installed """
 
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
                   warn_only=True, capture=True):
 
-        result = sudo("dpkg -L %s" % pkg)
-        if result.return_code == 0:
-            return True
-        elif result.return_code == 1:
-            return False
-        else:  # print error to user
-            print(result)
-            raise SystemExit()
+        result = sudo("dpkg -l %s" % pkg)
+        return not bool(result.return_code)
 
 
 def is_package_installed(distribution, pkg):
