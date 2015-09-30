@@ -1279,6 +1279,15 @@ def remove_container(container):
     sudo('docker rm -f %s' % get_container_id(container))
 
 
+def restart_service(service):
+    """ restarts a service  """
+    with hide('running', 'stdout'):
+        log_yellow('stoping service %s' % service)
+        sudo('service %s stop' % service)
+        log_yellow('starting service %s' % service)
+        sudo('service %s start' % service)
+
+
 def rsync():
     """ syncs the src code to the remote box """
     log_green('syncing code to remote box...')
