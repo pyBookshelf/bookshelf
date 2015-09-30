@@ -879,16 +879,20 @@ def install_mesos_single_box_mode(distribution):
     """ install mesos (all of it) on a single node"""
 
     if 'ubuntu' in distribution:
+        log_green('adding mesosphere apt-key')
         apt_add_key(keyid='E56151BF')
 
         os = lsb_release()
         apt_string = 'deb http://repos.mesosphere.io/%s %s main' % (
             os['DISTRIB_ID'], os['DISTRIB_CODENAME'])
 
+        log_green('adding mesosphere apt repository')
         apt_add_repository_from_apt_string(apt_string, 'mesosphere.list')
 
+        log_green('installing ubuntu development tools')
         install_ubuntu_development_tools()
 
+        log_green('installing mesos and marathon')
         apt_install(packages=['mesos', 'marathon'])
 
         if not file_contains('/etc/default/mesos-master',
