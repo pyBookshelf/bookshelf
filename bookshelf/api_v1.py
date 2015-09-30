@@ -745,8 +745,10 @@ def file_attribs(location, mode=None, owner=None, group=None, sudo=False):
 
 
 def get_container_id(container):
-        result = sudo("docker ps -a | grep %s | awk '{print $1}'" % container)
-        return result
+        with hide('running', 'stdout'):
+            result = sudo(
+                "docker ps -a | grep %s | awk '{print $1}'" % container)
+            return result
 
 
 def get_ec2_info(instance_id,
