@@ -1025,8 +1025,8 @@ def install_virtualbox(distribution, force_setup=False):
             sudo('apt-get -y upgrade')
         install_ubuntu_development_tools()
         apt_install(packages=['dkms',
-                               'linux-headers-generic',
-                               'build-essential'])
+                              'linux-headers-generic',
+                              'build-essential'])
         sudo('wget -q https://www.virtualbox.org/download/oracle_vbox.asc -O- |'
              'sudo apt-key add -')
 
@@ -1041,7 +1041,7 @@ def install_virtualbox(distribution, force_setup=False):
         apt_install(packages=['virtualbox-5.0'])
 
         with hide('running', 'stdout'):
-            loaded_modules=sudo('lsmod')
+            loaded_modules = sudo('lsmod')
 
         if 'vboxdrv' not in loaded_modules or force_setup:
             sudo('/etc/init.d/vboxdrv setup')
