@@ -7,6 +7,7 @@ import pyrax
 import re
 import socket
 import sys
+import uuid
 
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, EBSBlockDeviceType
 from fabric.api import env, sudo, local, settings, run
@@ -23,7 +24,6 @@ from fabric.contrib.files import (append as file_append,
 from itertools import chain
 from sys import exit
 from time import sleep
-from StringIO import StringIO
 
 
 def add_epel_yum_repository():
@@ -847,37 +847,50 @@ def install_mesos_single_box_mode(distribution):
             file_append('/etc/default/mesos-master',
                         'MESOS_QUORUM=1', use_sudo=True)
 
+            log_green('restarting services...')
             for svc in ['zookeeper', 'mesos-master', 'mesos-slave', 'marathon']:
-                sudo('service %s restart' % svc)
+                restart_service(svc)
 
+        if not file_contains('/etc/mesos-slave/work_dir',
+                             '/data/mesos', use_sudo=True):
+            file_append('/etc/mesos-slave/work_dir',
+                        '/data/mesos', use_sudo=True)
+
+            log_green('restarting services...')
+            for svc in ['mesos-slave']:
+                restart_service(svc)
+
+        log_green('enabling nginx autoindex on /...')
         insert_line_in_file_after_regex(
             path='/etc/nginx/sites-available/default',
             line='                autoindex on;',
-            after_regex='^.*location / {',
+            after_regex='^ *location / {',
             use_sudo=True)
+        log_green('restarting nginx')
+        restart_service('nginx')
 
 
 def insert_line_in_file_after_regex(path, line, after_regex, use_sudo=False):
     """ inserts a line in the middle of a file """
 
-    fd = StringIO()
-    get_file(path, fd, use_sudo=use_sudo)
-    original=fd.getvalue()
+    tmpfile = str(uuid.uuid4())
+    get_file(path, tmpfile, use_sudo=use_sudo)
+    with open(tmpfile) as f:
+        original = f.read()
 
     if line not in original:
-        output = StringIO()
-        for line in original.split('\n'):
-            output.write(line + '\n')
-            if re.match(after_regex, line) is not None:
-                output.write(line + '\n')
+        outfile = str(uuid.uuid4())
+        with open(outfile, 'w') as output:
+            for l in original.split('\n'):
+                output.write(l + '\n')
+                if re.match(after_regex, l) is not None:
+                    output.write(line + '\n')
 
-        upload_file(local_path=output,
+        upload_file(local_path=outfile,
                     remote_path=path,
                     use_sudo=use_sudo)
-        output.close()
-
-
-
+        os.unlink(outfile)
+    os.unlink(tmpfile)
 
 def install_gem(gem):
     """ install a particular gem """
