@@ -1098,7 +1098,7 @@ def is_deb_package_installed(pkg):
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
                   warn_only=True, capture=True):
 
-        result = sudo("dpkg -l %s" % pkg)
+        result = sudo('dpkg-query -l "%s" | grep -q ^.i' % pkg)
         return not bool(result.return_code)
 
 
