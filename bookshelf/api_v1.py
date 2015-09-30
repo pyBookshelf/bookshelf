@@ -670,6 +670,53 @@ def enable_firewalld_service():
     systemd(service='firewalld', unmask=True)
 
 
+def enable_marathon_basic_authentication(principal, password):
+    """ configures marathon to start with authentication """
+    upstart_file = '/etc/init/marathon.conf'
+    with hide('running', 'stdout'):
+        sudo('echo -n "{}" > /etc/marathon-mesos.credentials'.format(password))
+    boot_args = ' '.join(['exec',
+                          '/usr/bin/marathon',
+                          '--http_credentials',
+                          '"{}:{}"'.format(principal, password),
+                          '--mesos_authentication_principal',
+                          principal,
+                          '--mesos_authentication_secret_file',
+                          '/etc/marathon-mesos.credentials'])
+
+    # check if the init conf file contains the exact user and password
+    if not file_contains(upstart_file, boot_args, use_sudo=True):
+        sed(upstart_file, 'exec /usr/bin/marathon.*', boot_args, use_sudo=True)
+        file_attribs(upstart_file, mode=700, sudo=True)
+        restart_service('marathon')
+
+
+def enable_mesos_basic_authentication(principal, password):
+    """ enables and adds a new authorized principal """
+    restart = False
+    secrets_file = '/etc/mesos/secrets'
+    secrets_entry = '%s %s' % (principal, password)
+    if not file_contains(secrets_file, secrets_entry, use_sudo=True):
+        file_append(secrets_file, secrets_entry, use_sudo=True)
+        file_attribs(secrets_file, mode=700, sudo=True)
+        restart = True
+
+    # set new startup parameters for mesos-master
+    with cd('/etc/mesos-master'):
+        if not file_contains('credentials',
+                             secrets_file, use_sudo=True):
+            sudo('echo %s > credentials' % secrets_file)
+            restart = True
+
+        if not exists('?authenticate', use_sudo=True):
+            sudo('touch \?authenticate')
+            file_attribs('?authenticate', mode=700, sudo=True)
+            restart = True
+
+    if restart:
+        restart_service('mesos-master')
+
+
 def enable_selinux():
     """ disables selinux """
 
