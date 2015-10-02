@@ -917,7 +917,7 @@ def install_mesos_single_box_mode(distribution):
         insert_line_in_file_after_regex(
             path='/etc/nginx/sites-available/default',
             line='                autoindex on;',
-            after_regex='^ *location / {',
+            after_regex='^[^#]*location \/ {',
             use_sudo=True)
         log_green('restarting nginx')
         restart_service('nginx')
