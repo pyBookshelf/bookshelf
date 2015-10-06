@@ -1058,35 +1058,35 @@ def install_virtualbox(distribution, force_setup=False):
         with hide('running', 'stdout'):
             sudo('apt-get update')
             sudo('apt-get -y upgrade')
-        install_ubuntu_development_tools()
-        apt_install(packages=['dkms',
-                              'linux-headers-generic',
-                              'build-essential'])
-        sudo('wget -q https://www.virtualbox.org/download/oracle_vbox.asc -O- |'
-             'sudo apt-key add -')
+            install_ubuntu_development_tools()
+            apt_install(packages=['dkms',
+                                  'linux-headers-generic',
+                                  'build-essential'])
+            sudo('wget -q '
+                 'https://www.virtualbox.org/download/oracle_vbox.asc -O- |'
+                 'sudo apt-key add -')
 
-        os = lsb_release()
-        apt_string = ' '.join(
-            ['deb',
-             'http://download.virtualbox.org/virtualbox/debian',
-             '%s contrib' % os['DISTRIB_CODENAME']])
+            os = lsb_release()
+            apt_string = ' '.join(
+                ['deb',
+                 'http://download.virtualbox.org/virtualbox/debian',
+                 '%s contrib' % os['DISTRIB_CODENAME']])
 
-        apt_add_repository_from_apt_string(apt_string, 'vbox.list')
+            apt_add_repository_from_apt_string(apt_string, 'vbox.list')
 
-        apt_install(packages=['virtualbox-5.0'])
+            apt_install(packages=['virtualbox-5.0'])
 
-        with hide('running', 'stdout'):
             loaded_modules = sudo('lsmod')
 
-        if 'vboxdrv' not in loaded_modules or force_setup:
-            sudo('/etc/init.d/vboxdrv setup')
+            if 'vboxdrv' not in loaded_modules or force_setup:
+                sudo('/etc/init.d/vboxdrv setup')
 
-        sudo('wget -c '
-             'http://download.virtualbox.org/virtualbox/5.0.4/'
-             'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack')
+            sudo('wget -c '
+                 'http://download.virtualbox.org/virtualbox/5.0.4/'
+                 'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack') # noqa
 
-        sudo('VBoxManage extpack install --replace '
-             'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack')
+            sudo('VBoxManage extpack install --replace '
+                 'Oracle_VM_VirtualBox_Extension_Pack-5.0.4-102546.vbox-extpack') # noqa
 
 
 def install_vagrant(distribution, version):
@@ -1103,10 +1103,13 @@ def install_vagrant_plugin(plugin, use_sudo=False):
 
     cmd = 'vagrant plugin install %s' % plugin
 
-    if use_sudo:
-        sudo(cmd)
-    else:
-        run(cmd)
+    with settings(hide('running', 'stdout')):
+        if use_sudo:
+            if plugin not in sudo('vagrant plugin list'):
+                sudo(cmd)
+        else:
+            if plugin not in run('vagrant plugin list'):
+                run(cmd)
 
 
 def is_vagrant_plugin_installed(plugin, use_sudo=False):
