@@ -69,6 +69,13 @@ def add_usr_local_bin_to_path():
              '|sudo /usr/bin/tee /etc/profile.d/fix-path.sh')
 
 
+def add_zfs_apt_repository():
+    with settings(hide('warnings', 'running', 'stdout'),
+                  warn_only=True, capture=True):
+        sudo('echo | add-apt-repository ppa:zfs-native/stable')
+        sudo('apt-get update')
+
+
 def add_zfs_yum_repository():
     """ adds the yum repository for ZFSonLinux """
     ZFS_REPO_PKG = (
