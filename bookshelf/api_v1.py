@@ -921,6 +921,8 @@ def install_mesos_single_box_mode(distribution):
         log_green('installing ubuntu development tools')
         install_ubuntu_development_tools()
 
+        install_oracle_java(distribution, '8')
+
         log_green('installing mesos and marathon')
         apt_install(packages=['mesos', 'marathon'])
 
