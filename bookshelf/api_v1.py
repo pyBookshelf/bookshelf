@@ -72,6 +72,10 @@ def add_usr_local_bin_to_path():
 def add_zfs_apt_repository():
     with settings(hide('warnings', 'running', 'stdout'),
                   warn_only=True, capture=True):
+        install_ubuntu_development_tools()
+        apt_install(packages=['dkms',
+                              'linux-headers-generic',
+                              'build-essential'])
         sudo('echo | add-apt-repository ppa:zfs-native/stable')
         sudo('apt-get update')
 
