@@ -976,6 +976,7 @@ def insert_line_in_file_after_regex(path, line, after_regex, use_sudo=False):
         os.unlink(outfile)
     os.unlink(tmpfile)
 
+
 def install_gem(gem):
     """ install a particular gem """
     with settings(hide('warnings', 'running', 'stdout', 'stderr'),
