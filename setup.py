@@ -1,7 +1,7 @@
 from distutils.core import setup
 
 setup(name='Bookshelf',
-      version='1.1.8',
+      version='1.1.9',
       description='Bookshelf of Fabric functions',
       author='ClusterHQ',
       author_email='nospam@clusterhq.com',
