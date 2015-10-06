@@ -994,7 +994,7 @@ def install_recent_git_from_source():
         sudo('test -e /usr/local/bin/git || make install')
 
 
-def install_os_updates(distribution):
+def install_os_updates(distribution, force=False):
     """ installs OS updates """
     if ('centos' in distribution or
             'rhel' in distribution or
@@ -1009,7 +1009,10 @@ def install_os_updates(distribution):
         with settings(hide('warnings', 'running', 'stdout', 'stderr'),
                       warn_only=False, capture=True):
             sudo("DEBIAN_FRONTEND=noninteractive apt-get update")
-            sudo("apt-get -y upgrade")
+            if force:
+                sudo("apt-get -y upgrade --force-yes")
+            else:
+                sudo("apt-get -y upgrade")
 
 
 def install_python_module(name):
