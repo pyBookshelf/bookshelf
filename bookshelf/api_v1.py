@@ -1014,9 +1014,9 @@ def install_os_updates(distribution, force=False):
                       warn_only=False, capture=True):
             sudo("DEBIAN_FRONTEND=noninteractive apt-get update")
             if force:
-                sudo("apt-get -y upgrade --force-yes")
+                sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade --force-yes")
             else:
-                sudo("apt-get -y upgrade")
+                sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade")
 
 
 def install_python_module(name):
