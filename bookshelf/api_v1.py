@@ -14,7 +14,7 @@ from fabric.api import env, sudo, local, settings, run
 from fabric.operations import (get as get_file,
                                put as upload_file)
 from fabric.colors import green, yellow, red
-from fabric.context_managers import cd, hide, lcd
+from fabric.context_managers import cd, hide, lcd, quiet
 from fabric.contrib.files import (append as file_append,
                                   contains as file_contains,
                                   comment as comment_line,
