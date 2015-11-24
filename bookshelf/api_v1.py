@@ -1022,9 +1022,13 @@ def install_os_updates(distribution, force=False):
                       warn_only=False, capture=True):
             sudo("DEBIAN_FRONTEND=noninteractive apt-get update")
             if force:
-                sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' upgrade --force-yes")
+                sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o "
+                     "Dpkg::Options::='--force-confdef' "
+                     "-o Dpkg::Options::='--force-confold' upgrade --force-yes")
             else:
-                sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' upgrade")
+                sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o "
+                     "Dpkg::Options::='--force-confdef' -o "
+                     "Dpkg::Options::='--force-confold' upgrade")
 
 
 def install_python_module(name):
@@ -1104,9 +1108,11 @@ def install_vagrant(distribution, version):
     """ install vagrant """
 
     if 'ubuntu' in distribution:
-        apt_install_from_url('vagrant',
-                             'https://dl.bintray.com/mitchellh/vagrant/'
-                             'vagrant_%s_x86_64.deb' % version)
+        with quiet():
+            if version not in sudo('dpkg -l vagrant'):
+                apt_install_from_url('vagrant',
+                                     'https://dl.bintray.com/mitchellh/vagrant/'
+                                     'vagrant_%s_x86_64.deb' % version)
 
 
 def install_vagrant_plugin(plugin, use_sudo=False):
