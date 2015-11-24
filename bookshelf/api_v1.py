@@ -707,21 +707,23 @@ def enable_mesos_basic_authentication(principal, password):
     restart = False
     secrets_file = '/etc/mesos/secrets'
     secrets_entry = '%s %s' % (principal, password)
-    if not file_contains(secrets_file, secrets_entry, use_sudo=True):
-        file_append(secrets_file, secrets_entry, use_sudo=True)
+    if not file_contains(filename=secrets_file,
+                         text=secrets_entry, use_sudo=True):
+        file_append(filename=secrets_file, text=secrets_entry, use_sudo=True)
         file_attribs(secrets_file, mode=700, sudo=True)
         restart = True
 
     # set new startup parameters for mesos-master
-    with cd('/etc/mesos-master'):
-        if not file_contains('credentials',
-                             secrets_file, use_sudo=True):
-            sudo('echo %s > credentials' % secrets_file)
+    with quiet():
+        if secrets_file not in sudo('cat /etc/mesos-master/credentials'):
+            sudo('echo %s > /etc/mesos-master/credentials' % secrets_file)
             restart = True
 
-        if not exists('?authenticate', use_sudo=True):
-            sudo('touch \?authenticate')
-            file_attribs('?authenticate', mode=700, sudo=True)
+        if not exists('/etc/mesos-master/\?authenticate', use_sudo=True):
+            sudo('touch /etc/mesos-master/\?authenticate')
+            file_attribs('/etc/mesos-master/\?authenticate',
+                         mode=700,
+                         sudo=True)
             restart = True
 
     if restart:
@@ -949,13 +951,19 @@ def install_mesos_single_box_mode(distribution):
                 restart_service(svc)
 
         log_green('enabling nginx autoindex on /...')
-        insert_line_in_file_after_regex(
-            path='/etc/nginx/sites-available/default',
-            line='                autoindex on;',
-            after_regex='^[^#]*location \/ {',
-            use_sudo=True)
-        log_green('restarting nginx')
-        restart_service('nginx')
+
+        with quiet():
+            cmd = 'cat /etc/nginx/sites-available/default'
+            contents = sudo(cmd).replace('\n', ' ').replace('\r', '')
+
+        if not bool(re.search('.*#*location \/ {.*autoindex on;.*', contents)):
+            insert_line_in_file_after_regex(
+                path='/etc/nginx/sites-available/default',
+                line='                autoindex on;',
+                after_regex='^[^#]*location \/ {',
+                use_sudo=True)
+            log_green('restarting nginx')
+            restart_service('nginx')
 
 
 def insert_line_in_file_after_regex(path, line, after_regex, use_sudo=False):
