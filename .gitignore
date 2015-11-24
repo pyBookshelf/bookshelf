@@ -1,2 +1,7 @@
 venv
 *.pyc
+Dockerfile.*
+.ropeproject
+.cache/
+Dockerfile*
+Dockerfile
