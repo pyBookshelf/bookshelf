@@ -903,7 +903,7 @@ def install_oracle_java(distribution, java_version):
             sudo("yes | add-apt-repository ppa:webupd8team/java")
 
         with settings(hide('running', 'stdout')):
-            install_os_updates(distribution)
+            sudo('apt-get update')
             apt_install(packages=['oracle-java8-installer',
                                   'oracle-java8-set-default'])
 
