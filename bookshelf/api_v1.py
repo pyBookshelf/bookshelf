@@ -1,4 +1,4 @@
-# vim: ai ts=4 sts=4 et sw=4 ft=python fdm=indent et foldlevel=0
+# vim: ai ts=4 sts=4 et sw=4 ft=python fdm=indent et
 
 import boto.ec2
 import json
