@@ -263,64 +263,45 @@ def create_docker_group():
         sudo("groupadd docker")
 
 
-def create_server(cloud,
-                  region,
-                  access_key_id,
-                  secret_access_key,
-                  distribution,
-                  disk_name,
-                  disk_size,
-                  ami,
-                  key_pair,
-                  instance_type,
-                  username,
-                  security_groups='',
-                  instance_name='',
-                  tags={}):
+def create_server(cloud, **kwargs):
     """
         Create a new instance
     """
     if cloud == 'ec2':
-        create_server_ec2(distribution,
-                          region,
-                          access_key_id,
-                          secret_access_key,
-                          disk_name,
-                          disk_size,
-                          ami,
-                          key_pair,
-                          instance_type,
-                          username,
-                          tags,
-                          security_groups)
-    if cloud == 'rackspace':
-        create_server_rackspace(distribution=distribution,
-                                region=region,
-                                access_key_id=access_key_id,
-                                secret_access_key=secret_access_key,
-                                disk_name=disk_name,
-                                disk_size=disk_size,
-                                ami=ami,
-                                key_pair=key_pair,
-                                instance_type=instance_type,
-                                username=username,
-                                tags=tags,
-                                instance_name=instance_name,
-                                security_groups=security_groups)
+        _create_server_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        _create_server_rackspace(**kwargs)
+    elif cloud == 'gce':
+        _create_server_gce(**kwargs)
+    else:
+        raise ValueError("Unknown cloud type: {}".format(cloud))
 
 
-def create_server_ec2(distribution,
-                      region,
-                      access_key_id,
-                      secret_access_key,
-                      disk_name,
-                      disk_size,
-                      ami,
-                      key_pair,
-                      instance_type,
-                      username,
-                      tags={},
-                      security_groups=None):
+def _create_server_gce(**kwargs):
+    instance_id = u"slave-image-prep-" + unicode(uuid.uuid4())
+
+    log_green("Started...")
+    log_yellow("...Creating EC2 instance...")
+
+    save_state_locally(cloud='gce',
+                       instance_id=instance_id,
+                       region=region,
+                       username=username,
+                       access_key_id=access_key_id,
+                       secret_access_key=secret_access_key)
+
+def _create_server_ec2(distribution,
+                       region,
+                       access_key_id,
+                       secret_access_key,
+                       disk_name,
+                       disk_size,
+                       ami,
+                       key_pair,
+                       instance_type,
+                       username,
+                       tags={},
+                       security_groups=None):
     """
     Creates EC2 Instance and saves it state in a local json file
     """
@@ -374,19 +355,19 @@ def create_server_ec2(distribution,
                        secret_access_key=secret_access_key)
 
 
-def create_server_rackspace(distribution,
-                            region,
-                            access_key_id,
-                            secret_access_key,
-                            disk_name,
-                            disk_size,
-                            ami,
-                            key_pair,
-                            instance_type,
-                            username,
-                            instance_name,
-                            tags={},
-                            security_groups=None):
+def _create_server_rackspace(distribution,
+                             region,
+                             access_key_id,
+                             secret_access_key,
+                             disk_name,
+                             disk_size,
+                             ami,
+                             key_pair,
+                             instance_type,
+                             username,
+                             instance_name,
+                             tags={},
+                             security_groups=None):
     """
     Creates Rackspace Instance and saves it state in a local json file
     """
@@ -1317,7 +1298,13 @@ def print_rackspace_info(region,
 
 def rackspace():
     env.cloud = 'rackspace'
+    # Rackspace servers use root instead of the 'centos/ubuntu'
+    # when they first boot.
     env.user = 'root'
+
+
+def gce():
+    env.cloud = 'gce'
 
 
 def reboot():

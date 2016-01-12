@@ -7,6 +7,7 @@ setup(name='Bookshelf',
       author_email='nospam@clusterhq.com',
       url='https://www.github.com/ClusterHQ/Bookshelf/',
       packages=['bookshelf', ],
-      install_requires=['cuisine', 'fabric', 'pyrax', 'boto'],
+      install_requires=['cuisine', 'fabric', 'pyrax', 'boto',
+                        'google-api-python-client', 'oauth2client'],
       license='Apache License, Version 2.0',
      )
