@@ -8,8 +8,11 @@ import re
 import socket
 import sys
 import uuid
+from time import time, sleep
 
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, EBSBlockDeviceType
+from oauth2client.client import GoogleCredentials
+from googleapiclient import discovery
 from fabric.api import env, sudo, local, settings, run
 from fabric.operations import (get as get_file,
                                put as upload_file)
@@ -24,6 +27,48 @@ from fabric.contrib.files import (append as file_append,
 from itertools import chain
 from sys import exit
 from time import sleep
+
+_compute = None
+
+
+def _get_gce_compute():
+    global _compute
+    if _compute is None:
+        credentials = GoogleCredentials.get_application_default()
+        _compute = discovery.build('compute', 'v1', credentials=credentials)
+    return _compute
+
+
+def _gce_get_latest_image(project, image_name_prefix):
+    """ Gets the latest image for a distribution on gce.
+
+    The best way to get a list of possible image_name_prefix values is to look
+    at the output from ``gcloud compute images list``
+
+    If you don't have the gcloud executable installed, it can be pip installed:
+    ``pip install gcloud``
+
+    project, image_name_prefix examples:
+    * ubuntu-os-cloud, ubuntu-1404
+    * centos-cloud, centos-7
+    """
+    latest_image = None
+    page_token = None
+    while not latest_image:
+        response = _get_gce_compute().images().list(
+            project=project,
+            maxResults=500,
+            pageToken=page_token,
+            filter='name eq {}.*'.format(image_name_prefix)
+        ).execute()
+
+        latest_image = next((image for image in response.get('items', [])
+                             if 'deprecated' not in image),
+                            None)
+        page_token = response.get('nextPageToken')
+        if not page_token:
+            break
+    return latest_image
 
 
 def add_epel_yum_repository():
@@ -165,6 +210,8 @@ def connect_to_ec2(region, access_key_id, secret_access_key):
     return conn
 
 
+
+
 def connect_to_rackspace(region,
                          access_key_id,
                          secret_access_key):
@@ -276,19 +323,131 @@ def create_server(cloud, **kwargs):
     else:
         raise ValueError("Unknown cloud type: {}".format(cloud))
 
+# def gce_get_latest_image():
+#     credentials = GoogleCredentials.get_application_default()
+#     compute = discovery.build('compute', 'v1', credentials=credentials)
 
-def _create_server_gce(**kwargs):
+#     images = compute.list(project='ubuntu-os-cloud',
+#                           maxResults=None,
+#                           pageToken=None,
+#                           filter=None).execute()
+#     ubuntu_images = sorted([img for img in images
+#                             if image['name'].startswith('ubuntu-1404-trusty')
+
+
+
+def gce_wait_until_done(operation, project, zone):
+    """
+    Perform a GCE operation, blocking until the operation completes.
+
+    This function will then poll the operation until it reaches state
+    'DONE' or times out, and then returns the final operation resource
+    dict.
+
+    :param function: Callable that takes keyword arguments project and
+        zone, and returns an executable that results in a GCE operation
+        resource dict as described above.
+    :param kwargs: Additional keyword arguments to pass to function.
+
+    :returns dict: A dict representing the concluded GCE operation
+        resource.
+    """
+    # TODO(mewert): Be more sophisticated about timeout and retry loop.
+    # Look at EBS code, read up on how GCE behaves, potentially allow each
+    # operation to specify its own timeout. Also pass a reactor in so you
+    # can test the timeout error paths in unit tests. Also document what
+    # happens on timeout.
+    operation_name = operation['name']
+    done = False
+    latest_operation = None
+    start = time()
+    timeout = 5*60 #seconds
+    while not done:
+        latest_operation = _get_gce_compute().zoneOperations().get(
+            project=project,
+            zone=zone,
+            operation=operation_name).execute()
+        log_yellow("waiting for operation")
+        if (latest_operation['status'] == 'DONE' or
+            time() - start > timeout):
+            done = True
+        else:
+            sleep(10)
+            print "waiting for operation"
+    return latest_operation
+
+
+def _create_server_gce(project,
+                       zone,
+                       machine_type,
+                       base_image_prefix,
+                       base_image_project,
+                       user,
+                       public_key):
     instance_id = u"slave-image-prep-" + unicode(uuid.uuid4())
-
     log_green("Started...")
     log_yellow("...Creating EC2 instance...")
+    latest_image = _gce_get_latest_image(base_image_prefix, base_image_project)
 
-    save_state_locally(cloud='gce',
-                       instance_id=instance_id,
-                       region=region,
-                       username=username,
-                       access_key_id=access_key_id,
-                       secret_access_key=secret_access_key)
+    instance_config = {
+        'name': instance_id,
+        'machineType': machine_type,
+        'disks': [
+            {
+                "type": "PERSISTENT",
+                "boot": True,
+                "mode": "READ_WRITE",
+                "autoDelete": True,
+                "initializeParams": {
+                    "sourceImage": latest_image['selfLink'],
+                    "diskType": "https://www.googleapis.com/compute/v1/projects/clusterhq-acceptance/zones/{}/diskTypes/pd-standard".format(zone),
+                    "diskSizeGb": "10"
+                }
+            }
+        ],
+        "networkInterfaces": [
+            {
+                "network": "projects/clusterhq-acceptance/global/networks/default",
+                "accessConfigs": [
+                    {
+                        "name": "External NAT",
+                        "type": "ONE_TO_ONE_NAT"
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "items": [
+                {
+                    "key": "sshKeys",
+                    "value": "{}:{}".format(user, public_key)
+                }
+            ]
+        },
+        'description': 'created by: https://github.com/ClusterHQ/CI-slave-images',
+        "serviceAccounts": [
+            {
+                "email": "default",
+                "scopes": [
+                    "https://www.googleapis.com/auth/cloud.useraccounts.readonly",
+                    "https://www.googleapis.com/auth/devstorage.read_only",
+                    "https://www.googleapis.com/auth/logging.write",
+                    "https://www.googleapis.com/auth/monitoring.write"
+                ]
+            }
+        ]
+    }
+    # todo, add ssh keys
+    credentials = GoogleCredentials.get_application_default()
+    compute = discovery.build('compute', 'v1', credentials=credentials)
+
+    operation = compute.instances().insert(project=project,
+                                           zone=zone,
+                                           body=instance_config).execute()
+    result = gce_wait_until_done(operation, project, zone)
+    if not result:
+        raise RuntimeError("Creation of VM timed out or returned no result")
+
 
 def _create_server_ec2(distribution,
                        region,
