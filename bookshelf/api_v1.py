@@ -26,7 +26,7 @@ from fabric.contrib.files import (append as file_append,
                                   contains)
 from itertools import chain
 from sys import exit
-from time import sleep
+
 
 _compute = None
 
@@ -323,18 +323,6 @@ def create_server(cloud, **kwargs):
     else:
         raise ValueError("Unknown cloud type: {}".format(cloud))
 
-# def gce_get_latest_image():
-#     credentials = GoogleCredentials.get_application_default()
-#     compute = discovery.build('compute', 'v1', credentials=credentials)
-
-#     images = compute.list(project='ubuntu-os-cloud',
-#                           maxResults=None,
-#                           pageToken=None,
-#                           filter=None).execute()
-#     ubuntu_images = sorted([img for img in images
-#                             if image['name'].startswith('ubuntu-1404-trusty')
-
-
 
 def gce_wait_until_done(operation, project, zone):
     """
@@ -447,6 +435,19 @@ def _create_server_gce(project,
     result = gce_wait_until_done(operation, project, zone)
     if not result:
         raise RuntimeError("Creation of VM timed out or returned no result")
+
+    log_green("Instance has booted")
+
+    instance_data = compute.instances().list(
+        project=project, zone=zone, filter='name eq {}'.format(instance_id)
+    ).execute()
+
+    if not instance_data.get('items'):
+        raise RuntimeError(
+            "could not get instance data for {}".format(instance_id))
+    instance_ip = (instance_data['items'][0]['networkInterfaces'][0]
+                   ['accessConfigs'][0]['natIP'])
+    wait_for_ssh(instance_ip)
 
 
 def _create_server_ec2(distribution,
@@ -1370,7 +1371,7 @@ def linux_distribution(username, ip_address):
 
 
 def load_state_from_disk():
-    """ loads the state from a loca data.json file
+    """ loads the state from a local data.json file
     """
     if is_there_state():
         with open('data.json', 'r') as f:
@@ -1606,12 +1607,17 @@ def terminate():
 def up(cloud, instance_id, region, access_key_id, secret_access_key, username):
     if cloud == 'ec2':
         up_ec2(region, access_key_id, secret_access_key, instance_id, username)
-    if cloud == 'rackspace':
+    elif cloud == 'rackspace':
         up_rackspace(region,
                      access_key_id,
                      secret_access_key,
                      instance_id,
                      username)
+    elif cloud == 'gce':
+        raise NotImplementedError(
+            "Whoops, someone didn't finish their homework")
+    else:
+        raise ValueError("Unknown cloud type: {}".format(cloud))
 
 
 def up_ec2(region,
