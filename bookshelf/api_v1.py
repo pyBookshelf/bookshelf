@@ -210,8 +210,6 @@ def connect_to_ec2(region, access_key_id, secret_access_key):
     return conn
 
 
-
-
 def connect_to_rackspace(region,
                          access_key_id,
                          secret_access_key):
@@ -724,11 +722,15 @@ def does_container_exist(container):
         return False
 
 
-def destroy(cloud, region, instance_id, access_key_id, secret_access_key):
+def destroy(cloud, **kwargs):
     if cloud == 'ec2':
-        destroy_ec2(region, instance_id, access_key_id, secret_access_key)
-    if cloud == 'rackspace':
-        destroy_rackspace(region, instance_id, access_key_id, secret_access_key)
+        destroy_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        destroy_rackspace(**kwargs)
+    elif cloud == 'gce':
+        destroy_gce_disk(**kwargs)
+    else:
+        raise ValueError('Unknown cloud type {}'.format(cloud))
 
 
 def destroy_ebs_volume(region, volume_id, access_key_id, secret_access_key):
@@ -760,6 +762,15 @@ def destroy_ec2(region, instance_id, access_key_id, secret_access_key):
     if volume_id:
         destroy_ebs_volume(region, volume_id, access_key_id,
                            secret_access_key)
+    os.unlink('data.json')
+
+
+def destroy_gce_disk(zone, project, disk_name):
+    compute = _get_gce_compute()
+    gce_wait_until_done(
+        compute.disks().delete(
+            project=project, zone=zone, disk=disk_name).execute()
+    )
     os.unlink('data.json')
 
 
