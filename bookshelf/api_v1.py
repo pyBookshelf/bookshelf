@@ -392,24 +392,14 @@ def gce_wait_until_done(operation):
     return latest_operation
 
 
-def _create_server_gce(project,
-                       zone,
-                       username,
-                       machine_type,
-                       base_image_prefix,
-                       base_image_project,
-                       public_key):
-    instance_name = u"slave-image-prep-" + unicode(uuid.uuid4())
-    log_green("Started...")
-    log_yellow("...Creating GCE instance...")
-    latest_image = _gce_get_latest_image(base_image_project, base_image_prefix)
-
-    instance_config = {
+def get_gce_instance_config(instance_name, project, zone, machine_type, image,
+                            username, public_key):
+    gce_slave_instance_config = {
         'name': instance_name,
         'machineType': (
             "projects/{}/zones/{}/machineTypes/{}".format(
                 project, zone, machine_type)
-        ),
+            ),
         'disks': [
             {
                 "type": "PERSISTENT",
@@ -417,7 +407,7 @@ def _create_server_gce(project,
                 "mode": "READ_WRITE",
                 "autoDelete": False,
                 "initializeParams": {
-                    "sourceImage": latest_image['selfLink'],
+                    "sourceImage": image,
                     "diskType": (
                         "projects/{}/zones/{}/diskTypes/pd-standard".format(
                             project, zone)
@@ -462,6 +452,22 @@ def _create_server_gce(project,
             }
         ]
     }
+    return gce_slave_instance_config
+
+
+def startup_gce_instance(project, zone, username, machine_type, image,
+                         public_key):
+    """
+    For now, jclouds is broken for GCE and we will have static slaves
+    in Jenkins.  Use this to boot them.
+    """
+    instance_name = u"jenkins-slave-image-" + unicode(uuid.uuid4())
+    log_green("Started...")
+    log_yellow("...Creating GCE Jenkins Slave Instance...")
+    instance_config = get_gce_instance_config(
+        instance_name, project, zone, machine_type, image,
+        username, public_key
+    )
     operation = _get_gce_compute().instances().insert(
         project=project,
         zone=zone,
@@ -470,8 +476,22 @@ def _create_server_gce(project,
     result = gce_wait_until_done(operation)
     if not result:
         raise RuntimeError("Creation of VM timed out or returned no result")
-
     log_green("Instance has booted")
+
+
+def _create_server_gce(project,
+                       zone,
+                       username,
+                       machine_type,
+                       base_image_prefix,
+                       base_image_project,
+                       public_key):
+    instance_name = u"slave-image-prep-" + unicode(uuid.uuid4())
+    log_green("Started...")
+    log_yellow("...Creating GCE instance...")
+    latest_image = _gce_get_latest_image(base_image_project, base_image_prefix)
+    startup_gce_instance(instance_name, project, zone, machine_type,
+                         latest_image['selfLink'], username, public_key)
 
     instance_data = _get_gce_compute().instances().get(
         project=project, zone=zone, instance=instance_name
