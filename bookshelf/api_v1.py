@@ -455,13 +455,12 @@ def get_gce_instance_config(instance_name, project, zone, machine_type, image,
     return gce_slave_instance_config
 
 
-def startup_gce_instance(project, zone, username, machine_type, image,
-                         public_key):
+def startup_gce_instance(instance_name, project, zone, username, machine_type,
+                         image, public_key):
     """
     For now, jclouds is broken for GCE and we will have static slaves
     in Jenkins.  Use this to boot them.
     """
-    instance_name = u"jenkins-slave-image-" + unicode(uuid.uuid4())
     log_green("Started...")
     log_yellow("...Creating GCE Jenkins Slave Instance...")
     instance_config = get_gce_instance_config(
@@ -490,9 +489,8 @@ def _create_server_gce(project,
     log_green("Started...")
     log_yellow("...Creating GCE instance...")
     latest_image = _gce_get_latest_image(base_image_project, base_image_prefix)
-    startup_gce_instance(instance_name, project, zone, machine_type,
-                         latest_image['selfLink'], username, public_key)
-
+    startup_gce_instance(instance_name, project, zone, username, machine_type,
+                         latest_image['selfLink'], public_key)
     instance_data = _get_gce_compute().instances().get(
         project=project, zone=zone, instance=instance_name
     ).execute()
