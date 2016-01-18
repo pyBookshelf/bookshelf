@@ -443,8 +443,8 @@ def get_gce_instance_config(instance_name, project, zone, machine_type, image,
             {
                 "email": "default",
                 "scopes": [
-                    "https://www.googleapis.com/auth/"
-                    "cloud.useraccounts.readonly",
+                    "https://www.googleapis.com/auth/compute",
+                    "https://www.googleapis.com/auth/cloud.useraccounts.readonly",
                     "https://www.googleapis.com/auth/devstorage.read_only",
                     "https://www.googleapis.com/auth/logging.write",
                     "https://www.googleapis.com/auth/monitoring.write"
