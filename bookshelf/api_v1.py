@@ -9,10 +9,12 @@ import socket
 import sys
 import uuid
 from time import time, sleep
+from pprint  import pformat
 
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, EBSBlockDeviceType
 from oauth2client.client import GoogleCredentials
 from googleapiclient import discovery
+from googleapiclient.errors import HttpError
 from fabric.api import env, sudo, local, settings, run
 from fabric.operations import (get as get_file,
                                put as upload_file)
@@ -260,14 +262,15 @@ def create_gce_image(zone,
     Assumes that the disk name is the same as the instance_name (this is the
     default behavior for boot disks on GCE).
     """
-    compute = _get_gce_compute()
-    disk_name = instance_name
 
-    gce_wait_until_done(compute.instances().delete(
-        project=project,
-        zone=zone,
-        instance=instance_name
-    ).execute())
+    disk_name = instance_name
+    try:
+        down_gce(instance_name=instance_name, project=project, zone=zone)
+    except HttpError as e:
+        if e.resp.status == 404:
+            log_yellow("the instance {} is already down".format(instance_name))
+        else:
+            raise e
 
     body = {
         "rawDisk": {},
@@ -277,7 +280,7 @@ def create_gce_image(zone,
         ),
         "description": description
     }
-
+    compute = _get_gce_compute()
     gce_wait_until_done(
         compute.images().insert(project=project, body=body).execute()
     )
@@ -393,29 +396,38 @@ def gce_wait_until_done(operation):
 
 
 def get_gce_instance_config(instance_name, project, zone, machine_type, image,
-                            username, public_key):
+                            username, public_key, disk_name=None):
+    if disk_name:
+        disk_config = {
+            "type": "PERSISTENT",
+            "boot": True,
+            "mode": "READ_WRITE",
+            "autoDelete": False,
+            "source": "projects/{}/zones/{}/disks/{}".format(
+                project, zone, disk_name)
+        }
+    else:
+        disk_config = {
+            "type": "PERSISTENT",
+            "boot": True,
+            "mode": "READ_WRITE",
+            "autoDelete": False,
+            "initializeParams": {
+                "sourceImage": image,
+                "diskType": (
+                    "projects/{}/zones/{}/diskTypes/pd-standard".format(
+                        project, zone)
+                ),
+                "diskSizeGb": "10"
+            }
+        }
     gce_slave_instance_config = {
         'name': instance_name,
         'machineType': (
             "projects/{}/zones/{}/machineTypes/{}".format(
                 project, zone, machine_type)
             ),
-        'disks': [
-            {
-                "type": "PERSISTENT",
-                "boot": True,
-                "mode": "READ_WRITE",
-                "autoDelete": False,
-                "initializeParams": {
-                    "sourceImage": image,
-                    "diskType": (
-                        "projects/{}/zones/{}/diskTypes/pd-standard".format(
-                            project, zone)
-                    ),
-                    "diskSizeGb": "10"
-                }
-            }
-        ],
+        'disks': [disk_config],
         "networkInterfaces": [
             {
                 "network": (
@@ -456,7 +468,7 @@ def get_gce_instance_config(instance_name, project, zone, machine_type, image,
 
 
 def startup_gce_instance(instance_name, project, zone, username, machine_type,
-                         image, public_key):
+                         image, public_key, disk_name=None):
     """
     For now, jclouds is broken for GCE and we will have static slaves
     in Jenkins.  Use this to boot them.
@@ -465,7 +477,7 @@ def startup_gce_instance(instance_name, project, zone, username, machine_type,
     log_yellow("...Creating GCE Jenkins Slave Instance...")
     instance_config = get_gce_instance_config(
         instance_name, project, zone, machine_type, image,
-        username, public_key
+        username, public_key, disk_name
     )
     operation = _get_gce_compute().instances().insert(
         project=project,
@@ -484,13 +496,16 @@ def _create_server_gce(project,
                        machine_type,
                        base_image_prefix,
                        base_image_project,
-                       public_key):
-    instance_name = u"slave-image-prep-" + unicode(uuid.uuid4())
+                       public_key,
+                       instance_name=None,
+                       disk_name=None):
+    if instance_name is None:
+        instance_name = u"slave-image-prep-" + unicode(uuid.uuid4())
     log_green("Started...")
     log_yellow("...Creating GCE instance...")
     latest_image = _gce_get_latest_image(base_image_project, base_image_prefix)
     startup_gce_instance(instance_name, project, zone, username, machine_type,
-                         latest_image['selfLink'], public_key)
+                         latest_image['selfLink'], public_key, disk_name)
     instance_data = _get_gce_compute().instances().get(
         project=project, zone=zone, instance=instance_name
     ).execute()
@@ -823,8 +838,8 @@ def does_image_exist(image):
             return False
 
 
-def down(cloud, instance_id, region, access_key_id, secret_access_key):
-    halt(cloud, instance_id, region, access_key_id, secret_access_key)
+def down(**kwargs):
+    halt(**kwargs)
 
 
 def down_ec2(instance_id, region, access_key_id, secret_access_key):
@@ -858,6 +873,14 @@ def down_rackspace(cloud,
         sleep(10)
         server = nova.servers.get(instance_id)
     log_yellow("Instance state: %s" % server.status)
+
+def down_gce(instance_name, project, zone):
+    compute = _get_gce_compute()
+    gce_wait_until_done(compute.instances().delete(
+        project=project,
+        zone=zone,
+        instance=instance_name
+    ).execute())
 
 
 def ebs_volume_exists(region, volume_id, access_key_id, secret_access_key):
@@ -1077,11 +1100,17 @@ def git_clone(repo_url, repo_name):
         run("git clone %s" % repo_url)
 
 
-def halt(cloud, instance_id, region, access_key_id, secret_access_key):
-    if cloud == 'ec2':
-        down_ec2(instance_id, region, access_key_id, secret_access_key)
-    if cloud == 'rackspace':
-        down_rackspace(instance_id, region, access_key_id, secret_access_key)
+def halt(**kwargs):
+    cloud = kwargs.pop('cloud')
+    if cloud == 'aws':
+        down_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        down_rackspace(cloud, **kwargs)
+    elif cloud == 'gce':
+        down_gce(**kwargs)
+    else:
+        raise RuntimeError("unknown cloud specified: {}".format(cloud))
+
 
 
 def install_centos_development_tools():
@@ -1500,6 +1529,30 @@ def print_ec2_info(region,
                                    username,
                                    data['ip_address']))
 
+def print_gce_info(zone, project, instance_name, data):
+    """ outputs information about our Rackspace instance """
+    try:
+        instance_info = _get_gce_compute().instances().get(
+            project=project,
+            zone=zone,
+            instance=instance_name
+        ).execute()
+        log_yellow(pformat(instance_info))
+        log_green("Instance state: %s" % instance_info['status'])
+        log_green("Ip address: %s" % data['ip_address'])
+    except HttpError as e:
+        if e.resp.status != 404:
+            raise e
+        log_yellow("Instance state: DOWN")
+    log_green("project: %s" % project)
+    log_green("zone: %s" % zone)
+    log_green("disk_name: %s" % instance_name)
+    log_green("user: %s" % data['username'])
+    log_green("ssh -i %s %s@%s" % (env.key_filename,
+                                   data['username'],
+                                   data['ip_address']))
+
+
 
 def print_rackspace_info(region,
                          instance_id,
@@ -1647,26 +1700,16 @@ def ssh_session(key_filename,
                                      "".join(chain.from_iterable(cli))))
 
 
-def status(cloud,
-           region,
-           instance_id,
-           access_key_id,
-           secret_access_key,
-           username):
+def status(cloud, **kwargs):
 
     if cloud == 'ec2':
-        print_ec2_info(region,
-                       instance_id,
-                       access_key_id,
-                       secret_access_key,
-                       username)
+        print_ec2_info(**kwargs)
 
     if cloud == 'rackspace':
-        print_rackspace_info(region,
-                             instance_id,
-                             access_key_id,
-                             secret_access_key,
-                             username)
+        print_rackspace_info(**kwargs)
+
+    if cloud == 'gce':
+        print_gce_info(**kwargs)
 
 
 def systemd(service, start=True, enabled=True, unmask=False, restart=False):
@@ -1696,18 +1739,13 @@ def terminate():
     destroy()
 
 
-def up(cloud, instance_id, region, access_key_id, secret_access_key, username):
+def up(cloud, **kwargs):
     if cloud == 'ec2':
-        up_ec2(region, access_key_id, secret_access_key, instance_id, username)
+        up_ec2(**kwargs)
     elif cloud == 'rackspace':
-        up_rackspace(region,
-                     access_key_id,
-                     secret_access_key,
-                     instance_id,
-                     username)
+        up_rackspace(**kwargs)
     elif cloud == 'gce':
-        raise NotImplementedError(
-            "Whoops, someone didn't finish their homework")
+        _create_server_gce(**kwargs)
     else:
         raise ValueError("Unknown cloud type: {}".format(cloud))
 
