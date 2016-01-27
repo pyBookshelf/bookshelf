@@ -1,5 +1,5 @@
 ### Status
-[![Build Status](https://travis-ci.org/Azulinho/fabric-collections.svg?branch=api_v2)](https://travis-ci.org/Azulinho/fabric-collections)
+[![Build Status](https://travis-ci.org/ClusterHQ/bookshelf.svg?branch=api_v2)](https://travis-ci.org/ClusterHQ/bookshelf)
 
 Bookshelf
 =======
