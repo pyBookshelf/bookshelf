@@ -1,7 +1,11 @@
 venv
 *.pyc
+.ropeproject
+Dockerfile*
+.cache
 Dockerfile.*
 .ropeproject
 .cache/
 Dockerfile*
 Dockerfile
+fixtures

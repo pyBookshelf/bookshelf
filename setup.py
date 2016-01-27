@@ -1,12 +1,16 @@
-from distutils.core import setup
+try:
+    from setuptools import setup
+except ImportError:
+    from distutils.core import setup
+
 
 setup(name='Bookshelf',
-      version='1.1.16',
+      version='2.0.0',
       description='Bookshelf of Fabric functions',
       author='ClusterHQ',
       author_email='nospam@clusterhq.com',
       url='https://www.github.com/ClusterHQ/Bookshelf/',
-      packages=['bookshelf', ],
+      packages=['bookshelf', 'bookshelf.api_v2', 'bookshelf.tests', 'bookshelf.tests.api_v2'],
       install_requires=['cuisine', 'fabric', 'pyrax', 'boto'],
       license='Apache License, Version 2.0',
      )
