@@ -23,8 +23,6 @@ def connect_to_ec2(region, access_key_id, secret_access_key):
 
 def create_ami(connection,
                region,
-               access_key_id,
-               secret_access_key,
                instance_id,
                name,
                description,
@@ -55,8 +53,6 @@ def create_ami(connection,
 
 def create_server_ec2(connection,
                       region,
-                      access_key_id,
-                      secret_access_key,
                       disk_name,
                       disk_size,
                       ami,
