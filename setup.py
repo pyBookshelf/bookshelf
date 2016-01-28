@@ -5,7 +5,7 @@ except ImportError:
 
 
 setup(name='Bookshelf',
-      version='2.0.2',
+      version='2.0.3',
       description='Bookshelf of Fabric functions',
       author='ClusterHQ',
       author_email='nospam@clusterhq.com',
