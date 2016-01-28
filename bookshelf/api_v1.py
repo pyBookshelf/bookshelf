@@ -8,8 +8,13 @@ import re
 import socket
 import sys
 import uuid
+from time import time, sleep
+from pprint  import pformat
 
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, EBSBlockDeviceType
+from oauth2client.client import GoogleCredentials
+from googleapiclient import discovery
+from googleapiclient.errors import HttpError
 from fabric.api import env, sudo, local, settings, run
 from fabric.operations import (get as get_file,
                                put as upload_file)
@@ -23,7 +28,49 @@ from fabric.contrib.files import (append as file_append,
                                   contains)
 from itertools import chain
 from sys import exit
-from time import sleep
+
+
+_compute = None
+
+
+def _get_gce_compute():
+    global _compute
+    if _compute is None:
+        credentials = GoogleCredentials.get_application_default()
+        _compute = discovery.build('compute', 'v1', credentials=credentials)
+    return _compute
+
+
+def _gce_get_latest_image(project, image_name_prefix):
+    """ Gets the latest image for a distribution on gce.
+
+    The best way to get a list of possible image_name_prefix values is to look
+    at the output from ``gcloud compute images list``
+
+    If you don't have the gcloud executable installed, it can be pip installed:
+    ``pip install gcloud``
+
+    project, image_name_prefix examples:
+    * ubuntu-os-cloud, ubuntu-1404
+    * centos-cloud, centos-7
+    """
+    latest_image = None
+    page_token = None
+    while not latest_image:
+        response = _get_gce_compute().images().list(
+            project=project,
+            maxResults=500,
+            pageToken=page_token,
+            filter='name eq {}.*'.format(image_name_prefix)
+        ).execute()
+
+        latest_image = next((image for image in response.get('items', [])
+                             if 'deprecated' not in image),
+                            None)
+        page_token = response.get('nextPageToken')
+        if not page_token:
+            break
+    return latest_image
 
 
 def add_epel_yum_repository():
@@ -232,32 +279,52 @@ def create_ami(region,
         return False
 
 
-def create_image(cloud,
-                 region,
-                 access_key_id,
-                 secret_access_key,
-                 instance_id,
-                 name,
-                 description,
-                 block_device_mapping=None):
+def create_gce_image(zone,
+                     project,
+                     instance_name,
+                     name,
+                     description):
+    """
+    Shuts down the instance and creates and image from the disk.
+
+    Assumes that the disk name is the same as the instance_name (this is the
+    default behavior for boot disks on GCE).
+    """
+
+    disk_name = instance_name
+    try:
+        down_gce(instance_name=instance_name, project=project, zone=zone)
+    except HttpError as e:
+        if e.resp.status == 404:
+            log_yellow("the instance {} is already down".format(instance_name))
+        else:
+            raise e
+
+    body = {
+        "rawDisk": {},
+        "name": name,
+        "sourceDisk": "projects/{}/zones/{}/disks/{}".format(
+            project, zone, disk_name
+        ),
+        "description": description
+    }
+    compute = _get_gce_compute()
+    gce_wait_until_done(
+        compute.images().insert(project=project, body=body).execute()
+    )
+    return name
+
+
+def create_image(cloud, **kwargs):
     """ proxy call for ec2, rackspace create ami backend functions """
     if cloud == 'ec2':
-        return(create_ami(region,
-                          access_key_id,
-                          secret_access_key,
-                          instance_id,
-                          name,
-                          description,
-                          block_device_mapping=None))
+        return create_ami(**kwargs)
 
     if cloud == 'rackspace':
-        return(create_rackspace_image(region,
-                                      access_key_id,
-                                      secret_access_key,
-                                      instance_id,
-                                      name,
-                                      description,
-                                      block_device_mapping=None))
+        return create_rackspace_image(**kwargs)
+
+    if cloud == 'gce':
+        return create_gce_image(**kwargs)
 
 
 def create_rackspace_image(region,
@@ -291,68 +358,214 @@ def create_docker_group():
         sudo("groupadd docker")
 
 
-def create_server(cloud,
-                  region,
-                  access_key_id,
-                  secret_access_key,
-                  distribution,
-                  disk_name,
-                  disk_size,
-                  ami,
-                  key_pair,
-                  instance_type,
-                  username,
-                  security_groups='',
-                  instance_name='',
-                  tags={}):
+def create_server(cloud, **kwargs):
     """
         Create a new instance
     """
     if cloud == 'ec2':
-        create_server_ec2(distribution,
-                          region,
-                          access_key_id,
-                          secret_access_key,
-                          disk_name,
-                          disk_size,
-                          ami,
-                          key_pair,
-                          instance_type,
-                          username,
-                          tags,
-                          security_groups)
-    if cloud == 'rackspace':
-        create_server_rackspace(distribution=distribution,
-                                region=region,
-                                access_key_id=access_key_id,
-                                secret_access_key=secret_access_key,
-                                disk_name=disk_name,
-                                disk_size=disk_size,
-                                ami=ami,
-                                key_pair=key_pair,
-                                instance_type=instance_type,
-                                username=username,
-                                tags=tags,
-                                instance_name=instance_name,
-                                security_groups=security_groups)
+        _create_server_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        _create_server_rackspace(**kwargs)
+    elif cloud == 'gce':
+        _create_server_gce(**kwargs)
+    else:
+        raise ValueError("Unknown cloud type: {}".format(cloud))
 
 
-def create_server_ec2(distribution,
-                      region,
-                      access_key_id,
-                      secret_access_key,
-                      disk_name,
-                      disk_size,
-                      ami,
-                      key_pair,
-                      instance_type,
-                      username,
-                      tags={},
-                      security_groups=None):
+def gce_wait_until_done(operation):
+    """
+    Perform a GCE operation, blocking until the operation completes.
+
+    This function will then poll the operation until it reaches state
+    'DONE' or times out, and then returns the final operation resource
+    dict.
+
+    :param operation: A dict representing a pending GCE operation resource.
+
+    :returns dict: A dict representing the concluded GCE operation
+        resource.
+    """
+    operation_name = operation['name']
+    if 'zone' in operation:
+        zone_url_parts = operation['zone'].split('/')
+        project = zone_url_parts[-3]
+        zone = zone_url_parts[-1]
+
+        def get_zone_operation():
+            return _get_gce_compute().zoneOperations().get(
+                project=project,
+                zone=zone,
+                operation=operation_name
+            )
+        update = get_zone_operation
+    else:
+        project = operation['selfLink'].split('/')[-4]
+
+        def get_global_operation():
+            return _get_gce_compute().globalOperations().get(
+                project=project,
+                operation=operation_name
+            )
+        update = get_global_operation
+    done = False
+    latest_operation = None
+    start = time()
+    timeout = 5*60  # seconds
+    while not done:
+        latest_operation = update().execute()
+        log_yellow("waiting for operation")
+        if (latest_operation['status'] == 'DONE' or
+                time() - start > timeout):
+            done = True
+        else:
+            sleep(10)
+            print "waiting for operation"
+    return latest_operation
+
+
+def get_gce_instance_config(instance_name, project, zone, machine_type, image,
+                            username, public_key, disk_name=None):
+    if disk_name:
+        disk_config = {
+            "type": "PERSISTENT",
+            "boot": True,
+            "mode": "READ_WRITE",
+            "autoDelete": False,
+            "source": "projects/{}/zones/{}/disks/{}".format(
+                project, zone, disk_name)
+        }
+    else:
+        disk_config = {
+            "type": "PERSISTENT",
+            "boot": True,
+            "mode": "READ_WRITE",
+            "autoDelete": False,
+            "initializeParams": {
+                "sourceImage": image,
+                "diskType": (
+                    "projects/{}/zones/{}/diskTypes/pd-standard".format(
+                        project, zone)
+                ),
+                "diskSizeGb": "10"
+            }
+        }
+    gce_slave_instance_config = {
+        'name': instance_name,
+        'machineType': (
+            "projects/{}/zones/{}/machineTypes/{}".format(
+                project, zone, machine_type)
+            ),
+        'disks': [disk_config],
+        "networkInterfaces": [
+            {
+                "network": (
+                    "projects/clusterhq-acceptance/global/networks/default"
+                ),
+                "accessConfigs": [
+                    {
+                        "name": "External NAT",
+                        "type": "ONE_TO_ONE_NAT"
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "items": [
+                {
+                    "key": "sshKeys",
+                    "value": "{}:{}".format(username, public_key)
+                }
+            ]
+        },
+        'description':
+            'created by: https://github.com/ClusterHQ/CI-slave-images',
+        "serviceAccounts": [
+            {
+                "email": "default",
+                "scopes": [
+                    "https://www.googleapis.com/auth/compute",
+                    "https://www.googleapis.com/auth/cloud.useraccounts.readonly",
+                    "https://www.googleapis.com/auth/devstorage.read_only",
+                    "https://www.googleapis.com/auth/logging.write",
+                    "https://www.googleapis.com/auth/monitoring.write"
+                ]
+            }
+        ]
+    }
+    return gce_slave_instance_config
+
+
+def startup_gce_instance(instance_name, project, zone, username, machine_type,
+                         image, public_key, disk_name=None):
+    """
+    For now, jclouds is broken for GCE and we will have static slaves
+    in Jenkins.  Use this to boot them.
+    """
+    log_green("Started...")
+    log_yellow("...Creating GCE Jenkins Slave Instance...")
+    instance_config = get_gce_instance_config(
+        instance_name, project, zone, machine_type, image,
+        username, public_key, disk_name
+    )
+    operation = _get_gce_compute().instances().insert(
+        project=project,
+        zone=zone,
+        body=instance_config
+    ).execute()
+    result = gce_wait_until_done(operation)
+    if not result:
+        raise RuntimeError("Creation of VM timed out or returned no result")
+    log_green("Instance has booted")
+
+
+def _create_server_gce(project,
+                       zone,
+                       username,
+                       machine_type,
+                       base_image_prefix,
+                       base_image_project,
+                       public_key,
+                       instance_name=None,
+                       disk_name=None):
+    if instance_name is None:
+        instance_name = u"slave-image-prep-" + unicode(uuid.uuid4())
+    log_green("Started...")
+    log_yellow("...Creating GCE instance...")
+    latest_image = _gce_get_latest_image(base_image_project, base_image_prefix)
+    startup_gce_instance(instance_name, project, zone, username, machine_type,
+                         latest_image['selfLink'], public_key, disk_name)
+    instance_data = _get_gce_compute().instances().get(
+        project=project, zone=zone, instance=instance_name
+    ).execute()
+
+    instance_ip = (
+        instance_data['networkInterfaces'][0]['accessConfigs'][0]['natIP']
+    )
+    wait_for_ssh(instance_ip)
+
+    log_green('New server with IP address {0}.'.format(instance_ip))
+
+    save_gce_state_locally(instance_name=instance_name,
+                           project=project,
+                           zone=zone,
+                           username=username,
+                           ip_address=instance_ip)
+
+
+def _create_server_ec2(region,
+                       access_key_id,
+                       secret_access_key,
+                       disk_name,
+                       disk_size,
+                       ami,
+                       key_pair,
+                       instance_type,
+                       username,
+                       tags={},
+                       security_groups=None):
     """
     Creates EC2 Instance and saves it state in a local json file
     """
-    #
     conn = connect_to_ec2(region, access_key_id, secret_access_key)
 
     log_green("Started...")
@@ -394,27 +607,25 @@ def create_server_ec2(distribution,
 
     log_green("Public dns: %s" % instance.public_dns_name)
     # finally save the details or our new instance into the local state file
-    save_state_locally(cloud='ec2',
-                       instance_id=instance.id,
-                       region=region,
-                       username=username,
-                       access_key_id=access_key_id,
-                       secret_access_key=secret_access_key)
+    save_ec2_state_locally(instance_id=instance.id,
+                           region=region,
+                           username=username,
+                           access_key_id=access_key_id,
+                           secret_access_key=secret_access_key)
 
 
-def create_server_rackspace(distribution,
-                            region,
-                            access_key_id,
-                            secret_access_key,
-                            disk_name,
-                            disk_size,
-                            ami,
-                            key_pair,
-                            instance_type,
-                            username,
-                            instance_name,
-                            tags={},
-                            security_groups=None):
+def _create_server_rackspace(region,
+                             access_key_id,
+                             secret_access_key,
+                             disk_name,
+                             disk_size,
+                             ami,
+                             key_pair,
+                             instance_type,
+                             username,
+                             instance_name,
+                             tags={},
+                             security_groups=None):
     """
     Creates Rackspace Instance and saves it state in a local json file
     """
@@ -451,12 +662,11 @@ def create_server_rackspace(distribution,
     wait_for_ssh(ip_address)
     log_green('New server with IP address {0}.'.format(ip_address))
     # finally save the details or our new instance into the local state file
-    save_state_locally(cloud='rackspace',
-                       instance_id=server.id,
-                       region=region,
-                       username=username,
-                       access_key_id=access_key_id,
-                       secret_access_key=secret_access_key)
+    save_rackspace_state_locally(instance_id=server.id,
+                                 region=region,
+                                 username=username,
+                                 access_key_id=access_key_id,
+                                 secret_access_key=secret_access_key)
 
 
 def dir_attribs(location, mode=None, owner=None,
@@ -573,11 +783,15 @@ def does_container_exist(container):
         return False
 
 
-def destroy(cloud, region, instance_id, access_key_id, secret_access_key):
+def destroy(cloud, **kwargs):
     if cloud == 'ec2':
-        destroy_ec2(region, instance_id, access_key_id, secret_access_key)
-    if cloud == 'rackspace':
-        destroy_rackspace(region, instance_id, access_key_id, secret_access_key)
+        destroy_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        destroy_rackspace(**kwargs)
+    elif cloud == 'gce':
+        destroy_gce_disk(**kwargs)
+    else:
+        raise ValueError('Unknown cloud type {}'.format(cloud))
 
 
 def destroy_ebs_volume(region, volume_id, access_key_id, secret_access_key):
@@ -612,6 +826,15 @@ def destroy_ec2(region, instance_id, access_key_id, secret_access_key):
     os.unlink('data.json')
 
 
+def destroy_gce_disk(zone, project, disk_name):
+    compute = _get_gce_compute()
+    gce_wait_until_done(
+        compute.disks().delete(
+            project=project, zone=zone, disk=disk_name).execute()
+    )
+    os.unlink('data.json')
+
+
 def destroy_rackspace(region, instance_id, access_key_id, secret_access_key):
     """ terminates the instance """
     nova = connect_to_rackspace(region,
@@ -643,8 +866,8 @@ def does_image_exist(image):
             return False
 
 
-def down(cloud, instance_id, region, access_key_id, secret_access_key):
-    halt(cloud, instance_id, region, access_key_id, secret_access_key)
+def down(**kwargs):
+    halt(**kwargs)
 
 
 def down_ec2(instance_id, region, access_key_id, secret_access_key):
@@ -678,6 +901,14 @@ def down_rackspace(cloud,
         sleep(10)
         server = nova.servers.get(instance_id)
     log_yellow("Instance state: %s" % server.status)
+
+def down_gce(instance_name, project, zone):
+    compute = _get_gce_compute()
+    gce_wait_until_done(compute.instances().delete(
+        project=project,
+        zone=zone,
+        instance=instance_name
+    ).execute())
 
 
 def ebs_volume_exists(region, volume_id, access_key_id, secret_access_key):
@@ -897,11 +1128,17 @@ def git_clone(repo_url, repo_name):
         run("git clone %s" % repo_url)
 
 
-def halt(cloud, instance_id, region, access_key_id, secret_access_key):
-    if cloud == 'ec2':
-        down_ec2(instance_id, region, access_key_id, secret_access_key)
-    if cloud == 'rackspace':
-        down_rackspace(instance_id, region, access_key_id, secret_access_key)
+def halt(**kwargs):
+    cloud = kwargs.pop('cloud')
+    if cloud == 'aws':
+        down_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        down_rackspace(cloud, **kwargs)
+    elif cloud == 'gce':
+        down_gce(**kwargs)
+    else:
+        raise RuntimeError("unknown cloud specified: {}".format(cloud))
+
 
 
 def install_centos_development_tools():
@@ -1258,7 +1495,7 @@ def linux_distribution(username, ip_address):
 
 
 def load_state_from_disk():
-    """ loads the state from a loca data.json file
+    """ loads the state from a local data.json file
     """
     if is_there_state():
         with open('data.json', 'r') as f:
@@ -1320,6 +1557,30 @@ def print_ec2_info(region,
                                    username,
                                    data['ip_address']))
 
+def print_gce_info(zone, project, instance_name, data):
+    """ outputs information about our Rackspace instance """
+    try:
+        instance_info = _get_gce_compute().instances().get(
+            project=project,
+            zone=zone,
+            instance=instance_name
+        ).execute()
+        log_yellow(pformat(instance_info))
+        log_green("Instance state: %s" % instance_info['status'])
+        log_green("Ip address: %s" % data['ip_address'])
+    except HttpError as e:
+        if e.resp.status != 404:
+            raise e
+        log_yellow("Instance state: DOWN")
+    log_green("project: %s" % project)
+    log_green("zone: %s" % zone)
+    log_green("disk_name: %s" % instance_name)
+    log_green("user: %s" % data['username'])
+    log_green("ssh -i %s %s@%s" % (env.key_filename,
+                                   data['username'],
+                                   data['ip_address']))
+
+
 
 def print_rackspace_info(region,
                          instance_id,
@@ -1345,7 +1606,13 @@ def print_rackspace_info(region,
 
 def rackspace():
     env.cloud = 'rackspace'
+    # Rackspace servers use root instead of the 'centos/ubuntu'
+    # when they first boot.
     env.user = 'root'
+
+
+def gce():
+    env.cloud = 'gce'
 
 
 def reboot():
@@ -1391,31 +1658,56 @@ def rsync():
         exit(1)
 
 
-def save_state_locally(cloud,
-                       instance_id,
-                       region,
-                       username,
-                       access_key_id,
-                       secret_access_key):
+def save_ec2_state_locally(instance_id,
+                           region,
+                           username,
+                           access_key_id,
+                           secret_access_key):
     """ queries EC2 for details about a particular instance_id and
         stores those details locally
     """
-    if cloud == 'ec2':
-        # retrieve the IP information from the instance
-        data = get_ec2_info(instance_id,
-                            region,
-                            access_key_id,
-                            secret_access_key,
-                            username)
-    if cloud == 'rackspace':
-        # retrieve the IP information from the instance
-        data = get_rackspace_info(instance_id,
-                                  region,
-                                  access_key_id,
-                                  secret_access_key,
-                                  username)
-        data['cloud_type'] = 'rackspace'
+    # retrieve the IP information from the instance
+    data = get_ec2_info(instance_id,
+                        region,
+                        access_key_id,
+                        secret_access_key,
+                        username)
+    return _save_state_locally(data)
 
+
+def save_rackspace_state_locally(instance_id,
+                                 region,
+                                 username,
+                                 access_key_id,
+                                 secret_access_key):
+    # retrieve the IP information from the instance
+    data = get_rackspace_info(instance_id,
+                              region,
+                              access_key_id,
+                              secret_access_key,
+                              username)
+    return _save_state_locally(data)
+
+
+def save_gce_state_locally(instance_name,
+                           project,
+                           zone,
+                           username,
+                           ip_address):
+    data = {
+        'cloud_type': 'gce',
+        'ip_address': ip_address,
+        'username': username,
+        'project': project,
+        'zone': zone,
+        'instance_name': instance_name,
+    }
+    data['distribution'] = linux_distribution(username, ip_address)
+    data['os_release'] = os_release(username, ip_address)
+    return _save_state_locally(data)
+
+
+def _save_state_locally(data):
     # dump it all
     with open('data.json', 'w') as f:
         json.dump(data, f)
@@ -1436,26 +1728,16 @@ def ssh_session(key_filename,
                                      "".join(chain.from_iterable(cli))))
 
 
-def status(cloud,
-           region,
-           instance_id,
-           access_key_id,
-           secret_access_key,
-           username):
+def status(cloud, **kwargs):
 
     if cloud == 'ec2':
-        print_ec2_info(region,
-                       instance_id,
-                       access_key_id,
-                       secret_access_key,
-                       username)
+        print_ec2_info(**kwargs)
 
     if cloud == 'rackspace':
-        print_rackspace_info(region,
-                             instance_id,
-                             access_key_id,
-                             secret_access_key,
-                             username)
+        print_rackspace_info(**kwargs)
+
+    if cloud == 'gce':
+        print_gce_info(**kwargs)
 
 
 def systemd(service, start=True, enabled=True, unmask=False, restart=False):
@@ -1485,15 +1767,15 @@ def terminate():
     destroy()
 
 
-def up(cloud, instance_id, region, access_key_id, secret_access_key, username):
+def up(cloud, **kwargs):
     if cloud == 'ec2':
-        up_ec2(region, access_key_id, secret_access_key, instance_id, username)
-    if cloud == 'rackspace':
-        up_rackspace(region,
-                     access_key_id,
-                     secret_access_key,
-                     instance_id,
-                     username)
+        up_ec2(**kwargs)
+    elif cloud == 'rackspace':
+        up_rackspace(**kwargs)
+    elif cloud == 'gce':
+        _create_server_gce(**kwargs)
+    else:
+        raise ValueError("Unknown cloud type: {}".format(cloud))
 
 
 def up_ec2(region,
@@ -1519,12 +1801,11 @@ def up_ec2(region,
     # and make sure we don't return until the instance is fully up
     wait_for_ssh(data['ip_address'])
     # lets update our local state file with the new ip_address
-    save_state_locally(cloud='ec2',
-                       instance_id=instance_id,
-                       region=region,
-                       username=username,
-                       access_key_id=access_key_id,
-                       secret_access_key=secret_access_key)
+    save_ec2_state_locally(instance_id=instance_id,
+                           region=region,
+                           username=username,
+                           access_key_id=access_key_id,
+                           secret_access_key=secret_access_key)
 
     env.hosts = data['ip_address']
 
