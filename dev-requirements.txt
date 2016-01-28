@@ -1,0 +1,15 @@
+docker-fabric
+fabric
+cuisine==0.7.11
+pyrax
+boto
+moto
+watchdog
+python-subunit
+junitxml
+ipython
+flake8
+# paramiko doesn't support recent SSH macs
+# https://github.com/paramiko/paramiko/pull/581
+-e git+https://github.com/ericwb/paramiko.git@rfc6668#egg=paramiko
+-e git+https://github.com/yejianye/watchdog-tricks.git#egg=watchdog-tricks

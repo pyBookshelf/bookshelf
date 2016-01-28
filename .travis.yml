@@ -1,0 +1,33 @@
+# .travis.yml
+#
+sudo: required
+
+services:
+  - docker
+
+language: python
+
+python:
+  - "2.7"
+
+matrix:
+  fast_finish: true
+
+env:
+  - TEST_SUITE=test_pkg.py
+  - TEST_SUITE=test_file.py
+  - TEST_SUITE=test_java.py
+  - TEST_SUITE=test_git.py
+  - TEST_SUITE=test_python.py
+  # we can't run vagrant on Travis.CI, as it uses OpenVZ
+  # so we need to skip the docker tests for now
+  # - TEST_SUITE=test_docker.py
+  #  test_vagrant runs a systemctl start, which is not possible
+  #  on a docker instance. So we use vagrant instead.
+  # which is not possible on travis.ci yet
+  # - TEST_SUITE=test_vagrant.py
+
+install:
+  - pip install .
+
+script: "python bookshelf/tests/api_v2/$TEST_SUITE"
