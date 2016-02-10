@@ -5,10 +5,7 @@ import uuid
 from zope.interface import implementer, provider
 from pyrsistent import PClass, field
 import pyrax
-#from novaclient.servers import REBOOT_HARD
 from novaclient.exceptions import NotFound
-from fabric.api import sudo, settings
-from fabric.context_managers import hide
 
 from bookshelf.api_v1 import wait_for_ssh
 from bookshelf.api_v2.logging_helpers import log_green, log_yellow, log_red
@@ -16,6 +13,9 @@ from cloud_instance import ICloudInstance, ICloudInstanceFactory, Distribution
 
 
 class RackspaceConfiguration(PClass):
+    """
+    The configuration needed to create a rackspace instance and image.
+    """
     username = field(factory=unicode, mandatory=True)
     instance_type = field(factory=unicode, mandatory=True)
     key_pair = field(factory=unicode, mandatory=True)
@@ -30,6 +30,10 @@ class RackspaceConfiguration(PClass):
 
 
 class RackspaceState(PClass):
+    """
+    Information about the rackspace instance that will later be used to
+    reconnect to the instance.
+    """
     instance_name = field(factory=unicode, mandatory=True)
     ip_address = field(factory=unicode, mandatory=True)
     distro = field(factory=unicode, mandatory=True)

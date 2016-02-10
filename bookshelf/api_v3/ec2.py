@@ -17,7 +17,7 @@ from bookshelf.api_v2.cloud import wait_for_ssh
 class EC2State(PClass):
     """
     Information about the ec2 instance that will later be used to
-    reconnecto to the instance.
+    reconnect to the instance.
     """
     instance_id = field(type=unicode, mandatory=True, factory=unicode)
     region = field(type=unicode, mandatory=True, factory=unicode)
@@ -44,7 +44,7 @@ def _parse_unicode_pvector(l):
 
 class EC2Configuration(PClass):
     """
-    The configuration needed to create an EC2 instance and image
+    The configuration needed to create an EC2 instance and image.
     """
     credentials = field(type=EC2Credentials, mandatory=True)
     username = field(type=unicode, mandatory=True, factory=unicode)
