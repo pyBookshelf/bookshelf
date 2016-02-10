@@ -23,7 +23,7 @@ class CloudInstanceTestMixin(object):
     self.instance_factory: An ICloudInstanceFactory provider.
     self.config: A valid configuration for the ICloudInstanceFactory provider.
     self.distribution: The distribution that the config launches.
-    self.region: A valid region  for the ICloudInstanceFactory provider.
+    self.region: A valid region for the ICloudInstanceFactory provider.
     """
 
     def _make_instance(self):
@@ -126,6 +126,34 @@ class MissingConfigError(Exception):
     pass
 
 
+class _Optional(object):
+    """
+    Object for configuring optional configuration values.
+    """
+
+    def __init__(self, default, description):
+        self.default = default
+        self.description = description
+
+    def __repr__(self):
+        return "{} (optional default={})".format(self.description,
+                                                 repr(self.default))
+
+
+def _is_optional(substructure):
+    """
+    Determines if a substructure is an optional part of the configuration.
+    """
+    if type(substructure) == _Optional:
+        return True
+    if type(substructure) is dict:
+        for value in substructure.values():
+            if not _is_optional(value):
+                return False
+        return True
+    return False
+
+
 def _extract_substructure(base, substructure):
     """
     Assuming that substructure is a possibly nested dictionary, return a new
@@ -146,8 +174,16 @@ def _extract_substructure(base, substructure):
             "Found dict value {} when expecting a simple configuration value "
             "{}.".format(repr(base), repr(substructure)))
     try:
-        return {key: _extract_substructure(base[key], substructure[key])
-                for key in substructure.keys()}
+        subdict = []
+        for key, value in substructure.iteritems():
+            if type(value) is _Optional:
+                base_val = base.get(key, value.default)
+            elif _is_optional(value):
+                base_val = base.get(key, {})
+            else:
+                base_val = base[key]
+            subdict.append((key, _extract_substructure(base_val, value)))
+        return dict(subdict)
     except KeyError as e:
         raise MissingConfigError(
             "Missing key {} in configuration".format(e.args[0]))
@@ -188,6 +224,9 @@ def _get_yaml_config(substructure, config=None):
     try:
         return _extract_substructure(config, substructure)
     except MissingConfigError as e:
+        yaml.add_representer(
+            _Optional,
+            lambda d, x: d.represent_scalar(u'tag:yaml.org,2002:str', repr(x)))
         print (
             'Skipping test: could not get configuration: {}\n\n'
             'In order to run this test, add ensure file at $ACCEPTANCE_YAML '
@@ -211,6 +250,7 @@ class RackspaceTests(unittest.TestCase, CloudInstanceTestMixin):
                     'keyname': '<Rackspace keypair name>',
                     'username': '<Rackspace username>',
                     'key': '<Rackspace API key>',
+                    'region': _Optional('HKG', '<Rackspace 3 letter region>')
                 },
                 'ssh_keys': {
                     'rackspace': {
@@ -236,7 +276,7 @@ class RackspaceTests(unittest.TestCase, CloudInstanceTestMixin):
             instance_name='rackspace-test-instance'
         ).serialize()
         self.distribution = Distribution.CENTOS7
-        self.region = 'HKG'
+        self.region = credentials["rackspace"]["region"].upper()
         self.instance_factory = RackspaceInstance
 
 
@@ -247,11 +287,19 @@ class GCETests(unittest.TestCase, CloudInstanceTestMixin):
 
     def setUp(self):
         super(GCETests, self).setUp()
-        raw_config = _load_config_from_yaml()
         credentials = _get_yaml_config(
             {
                 'gce': {
                     'project': '<GCE project>',
+                    'zone': _Optional('us-central1-f', '<GCE zone>'),
+                    'gce_credentials': {
+                        'private_key': _Optional(
+                            '', '<full-private-key-to-authenticate-as-'
+                                'service-account>'),
+                        'client_email': _Optional(
+                            '', '<service-account-email>')
+                    },
+                    'machine_type': _Optional('f1-micro', '<GCE machine type>')
                 },
                 'ssh_keys': {
                     'gce': {
@@ -260,16 +308,15 @@ class GCETests(unittest.TestCase, CloudInstanceTestMixin):
                     }
                 }
             },
-            config=raw_config
         )
 
         keys = credentials["ssh_keys"]["gce"]
 
         # If specified, attempt to use the service account credentials from
         # `acceptance.yml` rather than the default authentication method.
-        service_account_creds = (
-            raw_config.get('gce', {}).get('gce_credentials', {}))
-
+        # Preferred authentication method is to run `gcloud auth login` prior
+        # to running this test.
+        service_account_creds = credentials["gce"]["gce_credentials"]
         self.config = GCEConfiguration(
             credentials_private_key=(
                 service_account_creds.get('private_key', '')),
@@ -277,7 +324,7 @@ class GCETests(unittest.TestCase, CloudInstanceTestMixin):
             public_key_filename=keys["public_key_file"],
             private_key_filename=keys["private_key_file"],
             project=credentials["gce"]["project"],
-            machine_type="n1-standard-1",
+            machine_type=credentials["gce"]["machine_type"],
             image_basename="gce-test-image",
             username="gce-username-xyz",
             description="gce-test-description",
@@ -286,8 +333,21 @@ class GCETests(unittest.TestCase, CloudInstanceTestMixin):
             base_image_project='ubuntu-os-cloud'
         ).serialize()
         self.distribution = Distribution.UBUNTU1404
-        self.region = 'us-central1-f'
+        self.region = credentials["gce"]["zone"]
         self.instance_factory = GCEInstance
+
+# Specify a different AMI for the different regions.
+_UBUNTU_AMIS = {
+    'us-east-1': 'ami-ffe3c695',
+    'eu-central-1': 'ami-86564fea',
+    'eu-west-1': 'ami-bf72c4cc',
+    'ap-southeast-1': 'ami-7ac30f19',
+    'ap-northeast-1': 'ami-0419256a',
+    'ap-southeast-2': 'ami-520b2e31',
+    'sa-east-1': 'ami-a0b637cc',
+    'us-west-1': 'ami-34126654',
+    'us-west-2': 'ami-22b9a343',
+}
 
 
 class EC2Tests(unittest.TestCase, CloudInstanceTestMixin):
@@ -303,7 +363,10 @@ class EC2Tests(unittest.TestCase, CloudInstanceTestMixin):
                 'aws': {
                     'access_key': '<AWS-ACCESS-KEY>',
                     'secret_access_token': '<AWS-SECRET-ACCESS-TOKEN>',
-                    'keyname': '<aws-us-west-2-ssh-keypair-name>',
+                    'keyname': '<aws-ssh-keypair-name>',
+                    'region': _Optional('us-west-2', '<ec2-region>'),
+                    'instance_type': _Optional('t2.micro',
+                                               '<ec2-instance-type>')
                 },
                 'ssh_keys': {
                     'aws': {
@@ -313,26 +376,26 @@ class EC2Tests(unittest.TestCase, CloudInstanceTestMixin):
             }
         )
 
+        self.region = credentials["aws"]["region"]
         self.config = EC2Configuration(
             credentials=EC2Credentials(
                 access_key_id=credentials["aws"]["access_key"],
                 secret_access_key=credentials["aws"]["secret_access_token"]
             ),
-            username='centos',
+            username='ubuntu',
             disk_name='/dev/sda1',
             disk_size='48',
             instance_name='ec2-test-instance',
             tags={'name': 'test-instance-with-tags'},
             image_description='ec2-test-description',
             image_basename='ec2-image-basename',
-            ami='ami-d440a6e7',
+            ami=_UBUNTU_AMIS[self.region],
             key_filename=credentials["ssh_keys"]["aws"]["private_key_file"],
             key_pair=credentials["aws"]["keyname"],
-            instance_type='t2.medium',
+            instance_type=credentials["aws"]["instance_type"],
             security_groups=['ssh']
         ).serialize()
-        self.distribution = Distribution.CENTOS7
-        self.region = 'us-west-2'
+        self.distribution = Distribution.UBUNTU1404
         self.instance_factory = EC2Instance
 
 if __name__ == '__main__':
