@@ -31,4 +31,3 @@ To run tests do:
     python2 bookshelf/api_v2/test_packaging.py
     python2 bookshelf/api_v2/test_ec2.py
     python2 bookshelf/api_v2/test_rackspace.py
-
