@@ -32,3 +32,18 @@ To run tests do:
     python2 bookshelf/api_v2/test_ec2.py
     python2 bookshelf/api_v2/test_rackspace.py
 
+There are also tests for the api_v3 that spin up GCE, Rackspace, and EC2
+instances. These tests require credentials to access GCE, Rackspace, and EC2.
+These credentials are loaded from a yaml file from environment variable
+`ACCEPTANCE_YAML` referred to below as `acceptance.yml`. To create this file,
+start with an empty yml file and attempt to run the tests. Each test will be
+skipped, but will print out what configuration you need to add in order to run
+the test.
+
+To run these tests do:
+
+    export ACCEPTANCE_YAML=/path/to/your/acceptance.yml
+    virtualenv venv
+    . venv/bin/activate
+    pip install -r requirements.txt
+    python2 bookshelf/tests/api_v3/test_cloud.py
