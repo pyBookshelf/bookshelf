@@ -6,7 +6,7 @@ pyrax
 boto
 moto
 ipython
-oauth2client
+oauth2client==1.5.2
 google-api-python-client
 zope.interface
 pyrsistent
