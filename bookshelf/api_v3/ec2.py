@@ -315,7 +315,7 @@ class EC2Instance():
                 if not self._ebs_volume_exists(volume_id):
                     pass
                 else:
-                    raise("Couldn't delete EBS volume")
+                    raise Exception("Couldn't delete EBS volume")
 
     def destroy(self):
         self.down()
