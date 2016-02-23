@@ -303,18 +303,22 @@ class EC2Instance():
 
     def _destroy_ebs_volume(self, volume_id):
         """ destroys an ebs volume """
-
         if self._ebs_volume_exists(volume_id):
             log_yellow('destroying EBS volume ...')
             try:
                 self.connection.delete_volume(volume_id)
-            except:
+            except Exception as e:
                 # our EBS volume may be gone, but AWS info tables are stale
                 # wait a bit and ask again
-                sleep(5)
-                if not self._ebs_volume_exists(volume_id):
-                    pass
-                else:
+                log_yellow("exception raised when deleting volume")
+                log_yellow("{} -- {}".format(type(e), str(e)))
+                worked = False
+                for i in range(6):
+                    sleep(5)
+                    if not self._ebs_volume_exists(volume_id):
+                        log_green("It worked that time")
+                        worked = True
+                if not worked:
                     raise Exception("Couldn't delete EBS volume")
 
     def destroy(self):
