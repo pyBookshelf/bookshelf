@@ -9,3 +9,7 @@ Dockerfile.*
 Dockerfile*
 Dockerfile
 fixtures
+.pypirc
+pyBookshelf.egg-info/
+build
+dist
