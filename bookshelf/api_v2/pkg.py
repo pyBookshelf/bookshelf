@@ -25,14 +25,14 @@ def add_zfs_apt_repository():
     """ adds the ZFS repository """
     with settings(hide('warnings', 'running', 'stdout'),
                   warn_only=False, capture=True):
-        sudo('/usr/bin/apt-get update')
+        sudo('DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update')
         install_ubuntu_development_tools()
         apt_install(packages=['software-properties-common',
                               'dkms',
                               'linux-headers-generic',
                               'build-essential'])
         sudo('echo | add-apt-repository ppa:zfs-native/stable')
-        sudo('/usr/bin/apt-get update')
+        sudo('DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update')
         return True
 
 
@@ -51,7 +51,7 @@ def apt_install(**kwargs):
     """
     for pkg in list(kwargs['packages']):
         if is_package_installed(distribution='ubuntu', pkg=pkg) is False:
-            sudo("/usr/bin/apt-get install -y %s" % pkg)
+            sudo("DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y %s" % pkg)
         # if we didn't abort above, we should return True
         return True
 
@@ -85,7 +85,7 @@ def apt_add_repository_from_apt_string(apt_string, apt_file):
         file_append(apt_file_path, apt_string.lower(), use_sudo=True)
 
         with hide('running', 'stdout'):
-            output = sudo("/usr/bin/apt-get update")
+            output = sudo("DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update")
         if 'Some index files failed to download' in output:
             raise SystemExit(1)
         else:
@@ -113,7 +113,7 @@ def enable_apt_repositories(prefix, url, version, repositories):
                                                    version,
                                                    repositories))
         with hide('running', 'stdout'):
-            output = sudo("/usr/bin/apt-get update")
+            output = sudo("DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update")
         if 'Some index files failed to download' in output:
             raise SystemExit(1)
         else:

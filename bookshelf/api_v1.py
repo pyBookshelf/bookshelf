@@ -124,7 +124,7 @@ def add_zfs_apt_repository():
                               'linux-headers-generic',
                               'build-essential'])
         sudo('echo | add-apt-repository ppa:zfs-native/stable')
-        sudo('apt-get update')
+        sudo('DEBIAN_FRONTEND=noninteractive apt-get update')
 
 
 def add_zfs_yum_repository():
@@ -143,7 +143,7 @@ def apt_install(**kwargs):
     for pkg in list(kwargs['packages']):
         if is_package_installed(distribution='ubuntu', pkg=pkg) is False:
             log_green("installing %s ..." % pkg)
-            sudo("apt-get install -y %s" % pkg)
+            sudo("DEBIAN_FRONTEND=noninteractive apt-get install -y %s" % pkg)
 
 
 def apt_install_from_url(pkg_name, url, log=False):
@@ -179,7 +179,7 @@ def apt_add_repository_from_apt_string(apt_string, apt_file):
         file_append(apt_file_path, apt_string.lower(), use_sudo=True)
 
         with hide('running', 'stdout'):
-            sudo("apt-get update")
+            sudo("DEBIAN_FRONTEND=noninteractive apt-get update")
 
 
 def apt_add_key(keyid, keyserver='keyserver.ubuntu.com', log=False):
@@ -932,7 +932,7 @@ def enable_apt_repositories(prefix, url, version, repositories):
                                                    url,
                                                    version,
                                                    repositories))
-        sudo("apt-get update")
+        sudo("DEBIAN_FRONTEND=noninteractive apt-get update")
 
 
 def enable_firewalld_service():
@@ -1171,7 +1171,7 @@ def install_oracle_java(distribution, java_version):
             sudo("yes | add-apt-repository ppa:webupd8team/java")
 
         with settings(hide('running', 'stdout')):
-            sudo('apt-get update')
+            sudo('DEBIAN_FRONTEND=noninteractive apt-get update')
             apt_install(packages=['oracle-java8-installer',
                                   'oracle-java8-set-default'])
 
@@ -1338,7 +1338,7 @@ def install_virtualbox(distribution, force_setup=False):
 
     if 'ubuntu' in distribution:
         with hide('running', 'stdout'):
-            sudo('apt-get update')
+            sudo('DEBIAN_FRONTEND=noninteractive apt-get update')
             install_ubuntu_development_tools()
             apt_install(packages=['dkms',
                                   'linux-headers-generic',

@@ -15,8 +15,10 @@ def install_virtualbox(distribution, force_setup=False):
 
     if 'ubuntu' in distribution:
         with hide('running', 'stdout'):
-            sudo('apt-get update')
-            sudo('apt-get -y upgrade')
+            sudo('DEBIAN_FRONTEND=noninteractive apt-get update')
+            sudo("sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o "
+                    "Dpkg::Options::='--force-confdef' "
+                    "-o Dpkg::Options::='--force-confold' upgrade --force-yes")
             install_ubuntu_development_tools()
             apt_install(packages=['dkms',
                                   'linux-headers-generic',
